@@ -3,6 +3,8 @@ from functools import lru_cache
 
 import requests
 
+from config import is_allowed_tier1_league
+
 logger = logging.getLogger(__name__)
 
 OPENDOTA_PRO_MATCHES = "https://api.opendota.com/api/proMatches"
@@ -41,7 +43,8 @@ def get_recent_pro_matches(league_ids: set[int] | list[int], take: int = 50) -> 
     matches = []
     for row in rows:
         league_id = int(row.get("leagueid") or 0)
-        if league_id not in wanted:
+        league_name = row.get("league_name") or ""
+        if league_id not in wanted and not is_allowed_tier1_league(league_id, league_name):
             continue
         match_id = row.get("match_id")
         if not match_id:
@@ -50,7 +53,7 @@ def get_recent_pro_matches(league_ids: set[int] | list[int], take: int = 50) -> 
             {
                 "match_id": int(match_id),
                 "leagueid": league_id,
-                "league_name": row.get("league_name") or "",
+                "league_name": league_name,
                 "start_time": int(row.get("start_time") or 0),
                 "radiant_name": row.get("radiant_name") or "Radiant",
                 "dire_name": row.get("dire_name") or "Dire",
@@ -71,7 +74,8 @@ def get_live_league_matches(league_ids: set[int] | list[int], take: int = 50) ->
     matches = []
     for row in rows:
         league_id = int(row.get("league_id") or 0)
-        if league_id not in wanted:
+        league_name = row.get("league_name") or row.get("league_name_raw") or row.get("league") or ""
+        if league_id not in wanted and not is_allowed_tier1_league(league_id, league_name):
             continue
         match_id = row.get("match_id")
         if not match_id:
@@ -80,7 +84,7 @@ def get_live_league_matches(league_ids: set[int] | list[int], take: int = 50) ->
             {
                 "match_id": int(match_id),
                 "leagueid": league_id,
-                "league_name": "",
+                "league_name": league_name,
                 "start_time": int(row.get("activate_time") or 0),
                 "game_time": int(row.get("game_time") or 0),
                 "last_update_time": int(row.get("last_update_time") or 0),

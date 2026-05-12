@@ -4,7 +4,7 @@ import time
 
 import requests
 
-from config import STRATZ_TOKEN, TIER1_LEAGUES, TIER_TOURNAMENT_KEYWORDS
+from config import STRATZ_TOKEN, TIER1_LEAGUES, is_allowed_tier1_league
 
 logger = logging.getLogger(__name__)
 
@@ -192,12 +192,8 @@ def _league_is_tier1(league):
     if not league:
         return False
     league_id = league.get("id") or league.get("leagueId")
-    if league_id in TIER1_LEAGUES:
-        return True
-    name = (league.get("name") or league.get("displayName") or "").lower()
-    if "division 2" in name or "qualifier" in name or "open qualifier" in name:
-        return False
-    return any(keyword in name for keyword in TIER_TOURNAMENT_KEYWORDS)
+    name = league.get("displayName") or league.get("name") or ""
+    return is_allowed_tier1_league(league_id, name)
 
 
 def _preferred_player_name(steam_account):

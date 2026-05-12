@@ -8,6 +8,7 @@ from config import (
     RECENT_MATCHES_FETCH_LIMIT,
     SAFETY_MATCHES_FETCH_LIMIT,
     TIER1_LEAGUES,
+    is_allowed_tier1_league,
 )
 from opendota_discovery import get_live_league_matches, get_match_snapshot, get_recent_pro_matches
 from src.bot.readiness import snapshot_has_final_result
@@ -125,7 +126,7 @@ def get_recent_finished_safety_matches(current_live_ids: set[int] | None = None)
             continue
 
         league_id = int(match.get("leagueid") or 0)
-        if league_id not in TIER1_LEAGUES:
+        if not is_allowed_tier1_league(league_id, match.get("league_name") or ""):
             continue
 
         snapshot = get_match_snapshot(match_id)

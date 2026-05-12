@@ -23,6 +23,7 @@ TIER1_LEAGUES = {
     16935: "The International 2024",
     19422: "ESL One Birmingham 2026",
     17795: "ESL One Raleigh 2025",
+    19101: "BLAST Slam VII",
     19099: "BLAST Slam VI",
     17414: "BLAST Slam I",
     19543: "PGL Wallachia 2026 Season 8",
@@ -52,7 +53,35 @@ TIER_TOURNAMENT_KEYWORDS = (
     "esports world cup",
     "riyadh masters",
     "fissure playground",
+    "games of the future",
 )
+
+EXCLUDED_TOURNAMENT_KEYWORDS = (
+    "qualifier",
+    "qualification",
+    "closed qualifier",
+    "open qualifier",
+    "division",
+    "academy",
+    "regional",
+    "showmatch",
+)
+
+
+def is_allowed_tier1_league(league_id: int | str | None = 0, league_name: str | None = "") -> bool:
+    try:
+        resolved_id = int(league_id or 0)
+    except (TypeError, ValueError):
+        resolved_id = 0
+    if resolved_id in TIER1_LEAGUES:
+        return True
+
+    normalized_name = str(league_name or "").strip().lower()
+    if not normalized_name:
+        return False
+    if any(keyword in normalized_name for keyword in EXCLUDED_TOURNAMENT_KEYWORDS):
+        return False
+    return any(keyword in normalized_name for keyword in TIER_TOURNAMENT_KEYWORDS)
 
 
 def _read_secret_file(path):

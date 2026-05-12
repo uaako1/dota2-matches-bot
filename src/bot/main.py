@@ -5,6 +5,7 @@ import logging
 from config import CHECK_INTERVAL_MINUTES
 from config import LIVE_ANNOUNCE_ENABLED, LIVE_CHECK_ENABLED, MAX_MATCHES_PER_CHECK, POST_DELAY_SECONDS
 from config import TIER1_LEAGUES
+from config import is_allowed_tier1_league
 from opendota_discovery import get_league_matches, get_match_snapshot, get_player_info, get_team_info
 from src.bot.discovery import (
     filter_current_live_matches,
@@ -847,7 +848,11 @@ async def backfill_history(count: int = 10, any_league: bool = False) -> None:
         logger.info("No active configured matches found for backfill.")
         return
     if not any_league:
-        candidates = [match for match in candidates if match["leagueid"] in TIER1_LEAGUES]
+        candidates = [
+            match
+            for match in candidates
+            if is_allowed_tier1_league(match.get("leagueid"), match.get("league_name") or "")
+        ]
     candidates = [match for match in candidates if match["match_id"] not in sent_matches]
 
     candidates.sort(key=lambda item: int(item.get("start_time") or 0), reverse=True)

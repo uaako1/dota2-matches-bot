@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.config.constants import TIER1_LEAGUES
+from src.config.constants import TIER1_LEAGUES, is_allowed_tier1_league
 from src.models.match import MatchModel
 from src.models.player import PlayerModel
 from src.services.opendota_service import OpenDotaService
@@ -257,10 +257,12 @@ class MatchPipelineService:
 
     @staticmethod
     def _live_payload_from_steam(game: dict) -> dict:
+        league_id = int(game.get("league_id") or game.get("leagueid") or 0)
+        league_name = game.get("league_name") or TIER1_LEAGUES.get(league_id, "")
         return {
             "match_id": int(game.get("match_id") or 0),
-            "leagueid": int(game.get("league_id") or game.get("leagueid") or 0),
-            "league_name": TIER1_LEAGUES.get(int(game.get("league_id") or game.get("leagueid") or 0), ""),
+            "leagueid": league_id,
+            "league_name": league_name,
             "radiant_name": (game.get("radiant_team") or {}).get("team_name") or "Radiant",
             "dire_name": (game.get("dire_team") or {}).get("team_name") or "Dire",
             "radiant_score": int(game.get("radiant_score") or 0),
@@ -282,7 +284,8 @@ class MatchPipelineService:
         normalized_by_id: dict[int, MatchModel] = {}
         for row in opendota_live:
             league_id = int(row.get("league_id") or row.get("leagueid") or 0)
-            if league_id not in TIER1_LEAGUES:
+            league_name = row.get("league_name") or TIER1_LEAGUES.get(league_id, "")
+            if not is_allowed_tier1_league(league_id, league_name):
                 continue
             match_id = int(row.get("match_id") or 0)
             if not match_id:
@@ -291,7 +294,7 @@ class MatchPipelineService:
             payload = {
                 "match_id": match_id,
                 "leagueid": league_id,
-                "league_name": TIER1_LEAGUES.get(league_id, ""),
+                "league_name": league_name,
                 "radiant_name": row.get("team_name_radiant") or "Radiant",
                 "dire_name": row.get("team_name_dire") or "Dire",
                 "radiant_score": int(row.get("radiant_score") or steam_row.get("radiant_score") or 0),
@@ -314,7 +317,8 @@ class MatchPipelineService:
         for game in steam_games:
             match_id = int(game.get("match_id") or 0)
             league_id = int(game.get("league_id") or game.get("leagueid") or 0)
-            if not match_id or league_id not in TIER1_LEAGUES or match_id in normalized_by_id:
+            league_name = game.get("league_name") or TIER1_LEAGUES.get(league_id, "")
+            if not match_id or not is_allowed_tier1_league(league_id, league_name) or match_id in normalized_by_id:
                 continue
             payload = self._live_payload_from_steam(game)
             snapshot = await self.opendota.get_match_snapshot(match_id)
