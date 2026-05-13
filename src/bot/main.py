@@ -109,7 +109,9 @@ def _build_series_context(
     snapshot = snapshot or {}
     series_id = int(snapshot.get("series_id") or 0)
     series_type = snapshot.get("series_type")
-    if not series_id:
+    snapshot_radiant_id = int(snapshot.get("radiant_team_id") or 0)
+    snapshot_dire_id = int(snapshot.get("dire_team_id") or 0)
+    if not series_id and not (snapshot_radiant_id and snapshot_dire_id):
         return {}
 
     best_of = _series_best_of(series_type)
@@ -117,7 +119,15 @@ def _build_series_context(
 
     def load_series_matches() -> list[dict]:
         rows = get_league_matches(resolved_league_id)
-        matches = [row for row in rows if int(row.get("series_id") or 0) == series_id]
+        if series_id:
+            matches = [row for row in rows if int(row.get("series_id") or 0) == series_id]
+        else:
+            team_pair = {snapshot_radiant_id, snapshot_dire_id}
+            matches = [
+                row
+                for row in rows
+                if {int(row.get("radiant_team_id") or 0), int(row.get("dire_team_id") or 0)} == team_pair
+            ]
         matches.sort(key=lambda row: int(row.get("start_time") or 0))
         return matches
 
@@ -156,6 +166,8 @@ def _build_series_context(
                     "dire": team_wins.get(dire_team_id, 0),
                 }
 
+    if best_of is None and len(series_matches) > 1:
+        best_of = 3
     label = None
     if best_of:
         label = f"BO{best_of}"
