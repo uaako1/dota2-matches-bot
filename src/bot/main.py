@@ -304,15 +304,10 @@ def _snapshot_neutral_item_entry(payload: dict, item_map: dict[int, dict]) -> di
                 "display_name": str(short_name).replace("_", " ").title(),
             }
 
-    enhancement_ids = set(range(1583, 1597)) | set(range(1856, 1874))
     for key in ("item_neutral", "item_neutral_id", "neutral0Id", "neutral0_id", "neutral_item", "neutralItem", "item_neutral2"):
-        try:
-            raw_id = int(payload.get(key) or 0)
-        except (TypeError, ValueError):
-            raw_id = 0
-        if raw_id in enhancement_ids:
-            continue
         item = _snapshot_item_entry(payload.get(key), item_map)
+        if item and str(item.get("short_name") or "").startswith("enhancement_"):
+            continue
         if item:
             return item
     return None

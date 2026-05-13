@@ -162,8 +162,9 @@ def get_item_map():
     }
     """
     items = (((stratz_graphql(query) or {}).get("constants") or {}).get("items")) or []
+    item_map = {}
     if items:
-        return {
+        item_map.update({
             int(item["id"]): {
                 "id": int(item["id"]),
                 "short_name": item.get("shortName") or "",
@@ -171,13 +172,14 @@ def get_item_map():
             }
             for item in items
             if item.get("id") is not None
-        }
+        })
 
     fallback = _fetch_constants_json(DOTACONSTANTS_ITEMS)
-    item_map = {}
     for key, item in (fallback or {}).items():
         item_id = int(item.get("id") or key or 0)
         if not item_id:
+            continue
+        if item_id in item_map:
             continue
         short_name = (item.get("name") or str(key) or "").removeprefix("item_")
         item_map[item_id] = {
