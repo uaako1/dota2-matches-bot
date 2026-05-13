@@ -10,6 +10,7 @@ from storage import (
     forget_live_announcement,
     mark_tracked_live_preview_posted,
     remember_live_announcement,
+    remember_previewed_match,
     remember_sent_match,
     remove_tracked_live_match,
     save_state,
@@ -39,6 +40,7 @@ async def send_live_preview_post(details: dict, state: dict, *, match_id: int) -
     caption = build_preview_caption(details)
     await send_photo_with_retry(image_buf, caption)
     remember_live_announcement(state, match_id)
+    remember_previewed_match(state, match_id)
     mark_tracked_live_preview_posted(state, match_id)
     save_state(state)
     logger.info("Posted live preview for %s (bans_source=%s)", match_id, details.get("bans_source") or "unknown")
@@ -50,3 +52,9 @@ async def send_historical_preview_post(details: dict, *, match_id: int, post_del
     await send_photo_with_retry(preview_image, preview_caption)
     logger.info("Posted historical preview for %s", match_id)
     await asyncio.sleep(post_delay_seconds)
+
+
+async def send_recovery_preview_post(details: dict, state: dict, *, match_id: int, post_delay_seconds: int) -> None:
+    await send_historical_preview_post(details, match_id=match_id, post_delay_seconds=post_delay_seconds)
+    remember_previewed_match(state, match_id)
+    save_state(state)

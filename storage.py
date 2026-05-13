@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_STATE = {
     "sent_matches": [],
+    "previewed_matches": [],
     "announced_live_matches": [],
     "tracked_live_matches": {},
     "draft_cache": {},
@@ -51,6 +52,7 @@ def load_state() -> dict:
     state = deepcopy(DEFAULT_STATE)
     state.update(data if isinstance(data, dict) else {})
     state["sent_matches"] = [int(x) for x in state.get("sent_matches", []) if str(x).isdigit()]
+    state["previewed_matches"] = [int(x) for x in state.get("previewed_matches", []) if str(x).isdigit()]
     state["announced_live_matches"] = [
         int(x) for x in state.get("announced_live_matches", []) if str(x).isdigit()
     ]
@@ -83,6 +85,17 @@ def remember_sent_match(state: dict, match_id: int, max_sent: int = 2000) -> Non
     if match_id not in sent:
         sent.append(int(match_id))
     state["sent_matches"] = sent[-max_sent:]
+
+
+def get_previewed_set(state: dict) -> set[int]:
+    return {int(x) for x in state.get("previewed_matches", [])}
+
+
+def remember_previewed_match(state: dict, match_id: int, max_items: int = 2000) -> None:
+    previewed = [int(x) for x in state.get("previewed_matches", [])]
+    if int(match_id) not in previewed:
+        previewed.append(int(match_id))
+    state["previewed_matches"] = previewed[-max_items:]
 
 
 def get_announced_live_set(state: dict) -> set[int]:

@@ -17,7 +17,7 @@ from src.bot.discovery import (
     get_recent_finished_safety_matches,
     get_recently_deactivated_matches,
 )
-from src.bot.posting import send_historical_preview_post, send_live_preview_post, send_result_post
+from src.bot.posting import send_historical_preview_post, send_live_preview_post, send_recovery_preview_post, send_result_post
 from src.bot.readiness import (
     MIN_PREVIEW_BANS,
     has_complete_draft,
@@ -31,8 +31,10 @@ from steam_fetcher import get_live_league_game
 from storage import (
     get_announced_live_set,
     get_cached_draft,
+    get_previewed_set,
     get_sent_set,
     remember_draft_cache,
+    remember_previewed_match,
     save_state,
     upsert_tracked_live_match,
 )
@@ -919,6 +921,7 @@ async def check_and_post() -> None:
 
     logger.info("Found %s finished tracked matches.", len(new_matches))
     for match in new_matches:
+        await maybe_post_recovery_preview(match)
         await post_match(match)
 
 
@@ -1003,10 +1006,42 @@ async def post_historical_preview_and_result(match_summary: dict) -> None:
                 match_id=int(match_summary["match_id"]),
                 post_delay_seconds=POST_DELAY_SECONDS,
             )
+            remember_previewed_match(state, int(match_summary["match_id"]))
+            save_state(state)
         except Exception as exc:
             logger.error("Failed to post historical preview %s: %s", match_summary["match_id"], exc)
 
     await post_match(match_summary)
+
+
+async def maybe_post_recovery_preview(match_summary: dict) -> None:
+    match_id = int(match_summary["match_id"])
+    if match_id in get_previewed_set(state):
+        return
+
+    preview_details = _build_historical_preview_details(match_summary)
+    if not preview_details:
+        logger.info("Skipping recovery preview for %s because snapshot is unavailable.", match_id)
+        return
+    if not has_complete_draft(preview_details) or not has_enough_bans(preview_details):
+        logger.info(
+            "Skipping recovery preview for %s because draft is incomplete (players=%s bans=%s/%s).",
+            match_id,
+            len(preview_details.get("players") or []),
+            len(preview_details.get("bans") or []),
+            MIN_PREVIEW_BANS,
+        )
+        return
+
+    try:
+        await send_recovery_preview_post(
+            preview_details,
+            state,
+            match_id=match_id,
+            post_delay_seconds=POST_DELAY_SECONDS,
+        )
+    except Exception as exc:
+        logger.error("Failed to post recovery preview %s: %s", match_id, exc)
 
 
 async def backfill_league_story(league_id: int, count: int = 0, force: bool = False) -> None:

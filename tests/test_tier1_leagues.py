@@ -4,6 +4,7 @@ import unittest
 
 from config import MIN_PREVIEW_BANS, TIER1_LEAGUES, is_allowed_tier1_league
 from src.bot.main import _apply_logo_fallback, _merge_live_neutral_items, _merge_match_summary_metadata
+from storage import get_previewed_set, remember_previewed_match
 
 
 class Tier1LeagueTests(unittest.TestCase):
@@ -83,6 +84,14 @@ class Tier1LeagueTests(unittest.TestCase):
         _merge_live_neutral_items(details, match_summary)
 
         self.assertEqual(details["players"][0]["neutral_item"]["short_name"], "test_neutral")
+
+    def test_previewed_state_tracks_preview_separately_from_results(self) -> None:
+        state = {}
+
+        remember_previewed_match(state, 123)
+
+        self.assertEqual(get_previewed_set(state), {123})
+        self.assertNotIn("sent_matches", state)
 
 
 if __name__ == "__main__":
