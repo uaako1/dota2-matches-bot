@@ -103,22 +103,56 @@ def _build_series_context(
     match_id: int,
     league_id: int | None,
     snapshot: dict | None = None,
+    match_summary: dict | None = None,
     include_series_score: bool = False,
     include_current_match_in_score: bool = True,
 ) -> dict:
     snapshot = snapshot or {}
-    series_id = int(snapshot.get("series_id") or 0)
+    match_summary = match_summary or {}
+    series_id = int(snapshot.get("series_id") or match_summary.get("series_id") or 0)
     series_type = snapshot.get("series_type")
-    snapshot_radiant_id = int(snapshot.get("radiant_team_id") or 0)
-    snapshot_dire_id = int(snapshot.get("dire_team_id") or 0)
+    if series_type is None:
+        series_type = match_summary.get("series_type")
+    snapshot_radiant_id = int(
+        snapshot.get("radiant_team_id")
+        or match_summary.get("radiant_team_id")
+        or match_summary.get("team_id_radiant")
+        or 0
+    )
+    snapshot_dire_id = int(
+        snapshot.get("dire_team_id")
+        or match_summary.get("dire_team_id")
+        or match_summary.get("team_id_dire")
+        or 0
+    )
+
+    resolved_league_id = int(league_id or snapshot.get("leagueid") or match_summary.get("leagueid") or match_summary.get("league_id") or 0)
+    league_rows: list[dict] | None = None
+
+    def load_league_rows() -> list[dict]:
+        nonlocal league_rows
+        if league_rows is None:
+            league_rows = get_league_matches(resolved_league_id)
+        return league_rows
+
+    if not series_id and not (snapshot_radiant_id and snapshot_dire_id) and resolved_league_id:
+        current_row = next(
+            (row for row in load_league_rows() if int(row.get("match_id") or 0) == int(match_id)),
+            {},
+        )
+        series_id = int(current_row.get("series_id") or 0)
+        if series_type is None:
+            series_type = current_row.get("series_type")
+        snapshot_radiant_id = int(current_row.get("radiant_team_id") or 0)
+        snapshot_dire_id = int(current_row.get("dire_team_id") or 0)
+
     if not series_id and not (snapshot_radiant_id and snapshot_dire_id):
         return {}
 
     best_of = _series_best_of(series_type)
-    resolved_league_id = int(league_id or snapshot.get("leagueid") or 0)
 
     def load_series_matches() -> list[dict]:
-        rows = get_league_matches(resolved_league_id)
+        rows = load_league_rows()
         if series_id:
             matches = [row for row in rows if int(row.get("series_id") or 0) == series_id]
         else:
@@ -158,8 +192,8 @@ def _build_series_context(
                 if winner_id:
                     team_wins[winner_id] = team_wins.get(winner_id, 0) + 1
 
-            radiant_team_id = int(snapshot.get("radiant_team_id") or 0)
-            dire_team_id = int(snapshot.get("dire_team_id") or 0)
+            radiant_team_id = snapshot_radiant_id
+            dire_team_id = snapshot_dire_id
             if radiant_team_id or dire_team_id:
                 series_score = {
                     "radiant": team_wins.get(radiant_team_id, 0),
@@ -620,6 +654,7 @@ def _build_preview_details(match_summary: dict) -> dict:
         match_id,
         details.get("leagueid"),
         snapshot,
+        match_summary,
         include_series_score=True,
         include_current_match_in_score=False,
     )
@@ -718,7 +753,7 @@ def _build_result_details_from_snapshot(match_summary: dict) -> dict | None:
     }
     _merge_series_context(
         details,
-        _build_series_context(match_id, league_id, snapshot, include_series_score=True),
+        _build_series_context(match_id, league_id, snapshot, match_summary, include_series_score=True),
         include_current_map=True,
     )
     return _apply_logo_fallback(details, match_summary)
@@ -792,6 +827,7 @@ def _build_historical_preview_details(match_summary: dict) -> dict | None:
             match_id,
             league_id,
             snapshot,
+            match_summary,
             include_series_score=True,
             include_current_match_in_score=False,
         ),
@@ -821,7 +857,7 @@ async def post_match(match_summary: dict) -> None:
     _apply_official_snapshot_result(details, snapshot, match_summary)
     _merge_series_context(
         details,
-        _build_series_context(match_id, details.get("leagueid"), snapshot, include_series_score=True),
+        _build_series_context(match_id, details.get("leagueid"), snapshot, match_summary, include_series_score=True),
         include_current_map=True,
     )
     _merge_snapshot_player_loadouts(details, snapshot)

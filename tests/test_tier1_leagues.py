@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from config import MIN_PREVIEW_BANS, TIER1_LEAGUES, is_allowed_tier1_league
-from src.bot.main import _apply_logo_fallback, _merge_live_neutral_items, _merge_match_summary_metadata, maybe_post_recovery_preview
+from src.bot.main import (
+    _apply_logo_fallback,
+    _build_series_context,
+    _merge_live_neutral_items,
+    _merge_match_summary_metadata,
+    maybe_post_recovery_preview,
+)
 from storage import get_previewed_set, remember_previewed_match
 
 
@@ -84,6 +91,74 @@ class Tier1LeagueTests(unittest.TestCase):
         _merge_live_neutral_items(details, match_summary)
 
         self.assertEqual(details["players"][0]["neutral_item"]["short_name"], "test_neutral")
+
+    def test_series_context_uses_match_summary_when_snapshot_metadata_is_missing(self) -> None:
+        with patch(
+            "src.bot.main.get_league_matches",
+            return_value=[
+                {
+                    "match_id": 10,
+                    "series_id": 77,
+                    "start_time": 100,
+                    "radiant_team_id": 1,
+                    "dire_team_id": 2,
+                    "radiant_win": False,
+                },
+                {
+                    "match_id": 11,
+                    "series_id": 77,
+                    "start_time": 200,
+                    "radiant_team_id": 1,
+                    "dire_team_id": 2,
+                    "radiant_win": True,
+                },
+            ],
+        ):
+            context = _build_series_context(
+                11,
+                None,
+                snapshot={},
+                match_summary={"leagueid": 19696, "radiant_team_id": 1, "dire_team_id": 2},
+                include_series_score=True,
+            )
+
+        self.assertEqual(context["best_of"], 3)
+        self.assertEqual(context["game_number"], 2)
+        self.assertEqual(context["series_score"], {"radiant": 1, "dire": 1})
+
+    def test_series_context_uses_league_row_when_snapshot_and_summary_ids_are_missing(self) -> None:
+        with patch(
+            "src.bot.main.get_league_matches",
+            return_value=[
+                {
+                    "match_id": 20,
+                    "series_id": 88,
+                    "start_time": 100,
+                    "radiant_team_id": 3,
+                    "dire_team_id": 4,
+                    "radiant_win": True,
+                },
+                {
+                    "match_id": 21,
+                    "series_id": 88,
+                    "start_time": 200,
+                    "radiant_team_id": 4,
+                    "dire_team_id": 3,
+                    "radiant_win": True,
+                },
+            ],
+        ):
+            context = _build_series_context(
+                21,
+                19696,
+                snapshot={},
+                match_summary={},
+                include_series_score=True,
+            )
+
+        self.assertEqual(context["best_of"], 3)
+        self.assertEqual(context["game_number"], 2)
+        self.assertEqual(context["series_score"], {"radiant": 1, "dire": 1})
 
     def test_previewed_state_tracks_preview_separately_from_results(self) -> None:
         state = {}
