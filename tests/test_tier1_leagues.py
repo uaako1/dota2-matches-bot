@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from config import MIN_PREVIEW_BANS, TIER1_LEAGUES, is_allowed_tier1_league
-from src.bot.main import _apply_logo_fallback, _merge_live_neutral_items, _merge_match_summary_metadata
+from src.bot.main import _apply_logo_fallback, _merge_live_neutral_items, _merge_match_summary_metadata, maybe_post_recovery_preview
 from storage import get_previewed_set, remember_previewed_match
 
 
@@ -92,6 +92,25 @@ class Tier1LeagueTests(unittest.TestCase):
 
         self.assertEqual(get_previewed_set(state), {123})
         self.assertNotIn("sent_matches", state)
+
+
+class RecoveryPreviewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recovery_preview_does_not_duplicate_announced_live_preview(self) -> None:
+        import src.bot.main as main
+
+        previous_state = main.state
+        main.state = {
+            "announced_live_matches": [123],
+            "previewed_matches": [],
+            "tracked_live_matches": {},
+        }
+        try:
+            await maybe_post_recovery_preview({"match_id": 123})
+        finally:
+            state = main.state
+            main.state = previous_state
+
+        self.assertEqual(get_previewed_set(state), {123})
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ from storage import (
     get_cached_draft,
     get_previewed_set,
     get_sent_set,
+    get_tracked_live_matches,
     remember_draft_cache,
     remember_previewed_match,
     save_state,
@@ -1017,6 +1018,11 @@ async def post_historical_preview_and_result(match_summary: dict) -> None:
 async def maybe_post_recovery_preview(match_summary: dict) -> None:
     match_id = int(match_summary["match_id"])
     if match_id in get_previewed_set(state):
+        return
+    tracked = get_tracked_live_matches(state)
+    if match_id in get_announced_live_set(state) or bool((tracked.get(match_id) or {}).get("preview_posted")):
+        remember_previewed_match(state, match_id)
+        save_state(state)
         return
 
     preview_details = _build_historical_preview_details(match_summary)
