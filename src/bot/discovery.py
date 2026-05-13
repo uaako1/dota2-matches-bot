@@ -42,7 +42,12 @@ def get_recent_configured_matches() -> list[dict]:
 
 
 def get_raw_configured_live_rows() -> list[dict]:
-    live_matches = get_live_league_matches(set(TIER1_LEAGUES), take=LIVE_MATCHES_FETCH_LIMIT)
+    league_ids = set(TIER1_LEAGUES)
+    for match in get_recent_pro_matches(league_ids, take=RECENT_MATCHES_FETCH_LIMIT):
+        if is_allowed_tier1_league(match.get("leagueid"), match.get("league_name") or ""):
+            league_ids.add(int(match.get("leagueid") or 0))
+
+    live_matches = get_live_league_matches(league_ids, take=LIVE_MATCHES_FETCH_LIMIT)
     for match in live_matches:
         league_id = int(match["leagueid"])
         match["league_name"] = TIER1_LEAGUES.get(league_id, match.get("league_name") or f"League {league_id}")

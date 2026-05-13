@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import logging
 
+from config import MIN_PREVIEW_BANS
 from image_generator import _item_image
 
 logger = logging.getLogger(__name__)
-
-MIN_PREVIEW_BANS = 14
 
 
 def has_complete_draft(details: dict) -> bool:

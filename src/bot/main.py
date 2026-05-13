@@ -4,6 +4,7 @@ import logging
 
 from config import CHECK_INTERVAL_MINUTES
 from config import LIVE_ANNOUNCE_ENABLED, LIVE_CHECK_ENABLED, MAX_MATCHES_PER_CHECK, POST_DELAY_SECONDS
+from config import TEAM_LOGO_OVERRIDES
 from config import TIER1_LEAGUES
 from config import is_allowed_tier1_league
 from opendota_discovery import get_league_matches, get_match_snapshot, get_player_info, get_team_info
@@ -60,7 +61,10 @@ def _apply_logo_fallback(details: dict, match_summary: dict | None = None) -> di
 
     radiant_id = int(radiant_team.get("id") or match_summary.get("radiant_team_id") or 0)
     dire_id = int(dire_team.get("id") or match_summary.get("dire_team_id") or 0)
-    if radiant_id:
+    if radiant_id in TEAM_LOGO_OVERRIDES and not radiant_team.get("logo_url"):
+        radiant_team["id"] = radiant_id
+        radiant_team["logo_url"] = TEAM_LOGO_OVERRIDES[radiant_id]
+    if radiant_id and not radiant_team.get("logo_url"):
         radiant_info = get_team_info(radiant_id)
         radiant_team["id"] = radiant_id
         radiant_team["logo_url"] = radiant_info.get("logo_url") or radiant_team.get("logo_url") or ""
@@ -68,7 +72,10 @@ def _apply_logo_fallback(details: dict, match_summary: dict | None = None) -> di
         radiant_logo_id = str(match_summary.get("radiant_logo_id") or match_summary.get("team_logo_radiant") or "").strip()
         if radiant_logo_id:
             radiant_team["logo_url"] = f"https://steamusercontent-a.akamaihd.net/ugc/{radiant_logo_id}/"
-    if dire_id:
+    if dire_id in TEAM_LOGO_OVERRIDES and not dire_team.get("logo_url"):
+        dire_team["id"] = dire_id
+        dire_team["logo_url"] = TEAM_LOGO_OVERRIDES[dire_id]
+    if dire_id and not dire_team.get("logo_url"):
         dire_info = get_team_info(dire_id)
         dire_team["id"] = dire_id
         dire_team["logo_url"] = dire_info.get("logo_url") or dire_team.get("logo_url") or ""
@@ -248,6 +255,27 @@ def _apply_official_snapshot_result(details: dict, snapshot: dict, match_summary
     return details
 
 
+def _merge_match_summary_metadata(base: dict, extra: dict | None) -> dict:
+    if not extra:
+        return base
+    for key in (
+        "league_name",
+        "radiant_name",
+        "dire_name",
+        "radiant_team_id",
+        "dire_team_id",
+        "radiant_logo_id",
+        "dire_logo_id",
+        "team_logo_radiant",
+        "team_logo_dire",
+        "radiant_score",
+        "dire_score",
+    ):
+        if extra.get(key) not in (None, "", 0):
+            base[key] = extra.get(key)
+    return base
+
+
 def _snapshot_item_entry(item_id: int | str | None, item_map: dict[int, dict]) -> dict | None:
     try:
         resolved_id = int(item_id or 0)
@@ -338,6 +366,56 @@ def _merge_snapshot_player_loadouts(details: dict, snapshot: dict) -> dict:
         if not player.get("buffs"):
             player["buffs"] = _snapshot_buff_items(source, item_map)
 
+    return details
+
+
+def _summary_player_is_radiant(player: dict) -> bool:
+    if "isRadiant" in player:
+        return bool(player.get("isRadiant"))
+    if "is_radiant" in player:
+        return bool(player.get("is_radiant"))
+    if "team" in player:
+        return int(player.get("team") or 0) == 0
+    if "player_slot" in player:
+        return int(player.get("player_slot") or 0) < 128
+    return False
+
+
+def _merge_live_neutral_items(details: dict, match_summary: dict) -> dict:
+    live_players = match_summary.get("players") or []
+    detail_players = details.get("players") or []
+    if not live_players or not detail_players:
+        return details
+
+    item_map = get_item_map()
+    live_by_account = {}
+    live_by_hero_side = {}
+    for player in live_players:
+        direct_neutral = player.get("neutral_item")
+        neutral = dict(direct_neutral) if isinstance(direct_neutral, dict) and direct_neutral.get("short_name") else None
+        if not neutral:
+            neutral = _snapshot_neutral_item_entry(player, item_map)
+        if not neutral:
+            continue
+        account_id = int(player.get("account_id") or 0)
+        hero_id = int(player.get("hero_id") or player.get("heroId") or 0)
+        is_radiant = _summary_player_is_radiant(player)
+        if account_id:
+            live_by_account[account_id] = neutral
+        if hero_id:
+            live_by_hero_side[(is_radiant, hero_id)] = neutral
+
+    if not live_by_account and not live_by_hero_side:
+        return details
+
+    for player in detail_players:
+        if player.get("neutral_item"):
+            continue
+        account_id = int(player.get("account_id") or 0)
+        hero_id = int(player.get("hero_id") or 0)
+        neutral = live_by_account.get(account_id) or live_by_hero_side.get((bool(player.get("isRadiant")), hero_id))
+        if neutral:
+            player["neutral_item"] = dict(neutral)
     return details
 
 
@@ -737,6 +815,7 @@ async def post_match(match_summary: dict) -> None:
         include_current_map=True,
     )
     _merge_snapshot_player_loadouts(details, snapshot)
+    _merge_live_neutral_items(details, match_summary)
     _apply_logo_fallback(details, match_summary)
     log_result_asset_quality(match_id, details)
     missing_neutral, missing_neutral_icon, _ = result_asset_gaps(details)
@@ -747,6 +826,8 @@ async def post_match(match_summary: dict) -> None:
             missing_neutral[:10],
             missing_neutral_icon[:10],
         )
+        upsert_tracked_live_match(state, match_summary)
+        save_state(state)
         return
 
     try:
@@ -931,6 +1012,11 @@ async def post_historical_preview_and_result(match_summary: dict) -> None:
 async def backfill_league_story(league_id: int, count: int = 0, force: bool = False) -> None:
     sent_matches = set() if force else get_sent_set(state)
     rows = get_league_matches(int(league_id))
+    recent_by_match_id = {
+        int(match.get("match_id") or 0): match
+        for match in get_recent_configured_matches()
+        if int(match.get("leagueid") or 0) == int(league_id)
+    }
     candidates = []
     for row in rows:
         match_id = int(row.get("match_id") or 0)
@@ -938,20 +1024,24 @@ async def backfill_league_story(league_id: int, count: int = 0, force: bool = Fa
             continue
         if row.get("radiant_win") is None:
             continue
-        candidates.append(
-            {
-                "match_id": match_id,
-                "leagueid": int(row.get("leagueid") or league_id),
-                "league_name": TIER1_LEAGUES.get(int(row.get("leagueid") or league_id), row.get("league_name") or f"League {league_id}"),
-                "start_time": int(row.get("start_time") or 0),
-                "radiant_name": row.get("radiant_name") or "Radiant",
-                "dire_name": row.get("dire_name") or "Dire",
-                "radiant_team_id": int(row.get("radiant_team_id") or 0),
-                "dire_team_id": int(row.get("dire_team_id") or 0),
-                "radiant_score": int(row.get("radiant_score") or 0),
-                "dire_score": int(row.get("dire_score") or 0),
-            }
-        )
+        summary = {
+            "match_id": match_id,
+            "leagueid": int(row.get("leagueid") or league_id),
+            "league_name": TIER1_LEAGUES.get(int(row.get("leagueid") or league_id), row.get("league_name") or f"League {league_id}"),
+            "start_time": int(row.get("start_time") or 0),
+            "radiant_name": row.get("radiant_name") or "",
+            "dire_name": row.get("dire_name") or "",
+            "radiant_team_id": int(row.get("radiant_team_id") or 0),
+            "dire_team_id": int(row.get("dire_team_id") or 0),
+            "radiant_score": int(row.get("radiant_score") or 0),
+            "dire_score": int(row.get("dire_score") or 0),
+        }
+        _merge_match_summary_metadata(summary, recent_by_match_id.get(match_id))
+        if not summary.get("radiant_name"):
+            summary["radiant_name"] = "Radiant"
+        if not summary.get("dire_name"):
+            summary["dire_name"] = "Dire"
+        candidates.append(summary)
 
     candidates.sort(key=lambda item: int(item.get("start_time") or 0))
     if count > 0:

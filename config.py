@@ -14,6 +14,7 @@ POST_DELAY_SECONDS = 1
 LIVE_CHECK_ENABLED = True
 LIVE_ANNOUNCE_ENABLED = True
 ACTIVE_LEAGUE_LOOKBACK_DAYS = 45
+MIN_PREVIEW_BANS = int(os.getenv("MIN_PREVIEW_BANS", "14"))
 
 STATE_FILE = os.getenv("STATE_FILE", "data/bot_state.json").strip()
 
@@ -32,6 +33,7 @@ TIER1_LEAGUES = {
     18358: "PGL Wallachia 2025 Season 5",
     18058: "PGL Wallachia 2025 Season 4",
     19269: "DreamLeague Season 28",
+    19696: "DreamLeague Season 29",
     18988: "DreamLeague Season 27",
     18111: "DreamLeague Season 26",
     17765: "DreamLeague Season 25",
@@ -41,6 +43,10 @@ TIER1_LEAGUES = {
 
 ALLOWED_LEAGUE_IDS = set(TIER1_LEAGUES)
 LEAGUE_NAMES = dict(TIER1_LEAGUES)
+
+TEAM_LOGO_OVERRIDES = {
+    9964962: "https://cdn.steamusercontent.com/ugc/13245379764580870318/1048428BEFAC87EC1C64E15706A4758A173B5BFB/",
+}
 
 REQUIRE_TIER_TOURNAMENT = True
 TIER_TOURNAMENT_KEYWORDS = (
