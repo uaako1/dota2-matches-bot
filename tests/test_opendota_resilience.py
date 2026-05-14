@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import opendota_discovery
@@ -21,28 +23,60 @@ class FakeResponse:
 
 class OpenDotaResilienceTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._original_state_file = opendota_discovery.STATE_FILE
         opendota_discovery._opendota_blocked_until = 0
         opendota_discovery._opendota_last_status.clear()
+        opendota_discovery._persistent_lookup_cache_loaded = False
+        opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}}
+        opendota_discovery.clear_opendota_memory_cache()
+
+    def tearDown(self) -> None:
+        opendota_discovery.STATE_FILE = self._original_state_file
+        opendota_discovery._persistent_lookup_cache_loaded = False
+        opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}}
         opendota_discovery.clear_opendota_memory_cache()
 
     def test_player_info_does_not_cache_429_failure(self) -> None:
-        responses = [
-            FakeResponse(429, headers={"Retry-After": "60"}),
-            FakeResponse(200, {"profile": {"personaname": "Fallback", "name": "ProName", "steamid": "1"}}),
-        ]
-        calls = []
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            responses = [
+                FakeResponse(429, headers={"Retry-After": "60"}),
+                FakeResponse(200, {"profile": {"personaname": "Fallback", "name": "ProName", "steamid": "1"}}),
+            ]
+            calls = []
 
-        def fake_get(url: str, timeout: int):
-            calls.append(url)
-            return responses.pop(0)
+            def fake_get(url: str, timeout: int):
+                calls.append(url)
+                return responses.pop(0)
 
-        with patch("opendota_discovery.requests.get", side_effect=fake_get):
-            self.assertEqual(opendota_discovery.get_player_info(123), {})
-            opendota_discovery._opendota_blocked_until = 0
-            self.assertEqual(opendota_discovery.get_player_info(123)["name"], "ProName")
-            self.assertEqual(opendota_discovery.get_player_info(123)["name"], "ProName")
+            with patch("opendota_discovery.requests.get", side_effect=fake_get):
+                self.assertEqual(opendota_discovery.get_player_info(123), {})
+                opendota_discovery._opendota_blocked_until = 0
+                self.assertEqual(opendota_discovery.get_player_info(123)["name"], "ProName")
+                self.assertEqual(opendota_discovery.get_player_info(123)["name"], "ProName")
 
-        self.assertEqual(len(calls), 2)
+            self.assertEqual(len(calls), 2)
+
+    def test_player_info_uses_persistent_lookup_cache(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            responses = [
+                FakeResponse(200, {"profile": {"personaname": "Cached", "name": "EsportName", "steamid": "1"}}),
+            ]
+
+            def fake_get(url: str, timeout: int):
+                return responses.pop(0)
+
+            with patch("opendota_discovery.requests.get", side_effect=fake_get):
+                self.assertEqual(opendota_discovery.get_player_info(456)["name"], "EsportName")
+
+            opendota_discovery._persistent_lookup_cache_loaded = False
+            opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}}
+            opendota_discovery.clear_opendota_memory_cache()
+
+            with patch("opendota_discovery.requests.get") as mocked_get:
+                self.assertEqual(opendota_discovery.get_player_info(456)["name"], "EsportName")
+                mocked_get.assert_not_called()
 
     def test_backfill_story_keeps_maps_grouped_by_series(self) -> None:
         rows = [

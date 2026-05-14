@@ -1,10 +1,12 @@
 import logging
 import os
 import time
+import json
+from pathlib import Path
 
 import requests
 
-from config import is_allowed_tier1_league
+from config import STATE_FILE, is_allowed_tier1_league
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,63 @@ _opendota_blocked_until = 0.0
 _opendota_last_status: dict[str, object] = {}
 _team_cache: dict[int, dict] = {}
 _player_cache: dict[int, dict] = {}
+_persistent_lookup_cache_loaded = False
+_persistent_lookup_cache: dict[str, dict[str, dict]] = {"teams": {}, "players": {}}
+
+
+def _lookup_cache_path() -> Path:
+    return Path(STATE_FILE).parent / "opendota_lookup_cache.json"
+
+
+def _load_persistent_lookup_cache() -> None:
+    global _persistent_lookup_cache_loaded, _persistent_lookup_cache
+    if _persistent_lookup_cache_loaded:
+        return
+    _persistent_lookup_cache_loaded = True
+    path = _lookup_cache_path()
+    if not path.exists():
+        return
+    try:
+        with path.open("r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception as exc:
+        logger.warning("Could not load OpenDota lookup cache %s: %s", path, exc)
+        return
+    if not isinstance(data, dict):
+        return
+    teams = data.get("teams") if isinstance(data.get("teams"), dict) else {}
+    players = data.get("players") if isinstance(data.get("players"), dict) else {}
+    _persistent_lookup_cache = {"teams": teams, "players": players}
+    for key, value in teams.items():
+        if str(key).isdigit() and isinstance(value, dict):
+            _team_cache[int(key)] = dict(value)
+    for key, value in players.items():
+        if str(key).isdigit() and isinstance(value, dict):
+            _player_cache[int(key)] = dict(value)
+
+
+def _save_persistent_lookup_cache() -> None:
+    path = _lookup_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(_persistent_lookup_cache, f, ensure_ascii=False, indent=2)
+        tmp_path.replace(path)
+    except Exception as exc:
+        logger.warning("Could not save OpenDota lookup cache %s: %s", path, exc)
+
+
+def _remember_lookup_cache(kind: str, key: int, payload: dict) -> None:
+    if not payload:
+        return
+    _load_persistent_lookup_cache()
+    bucket = _persistent_lookup_cache.setdefault(kind, {})
+    bucket[str(int(key))] = dict(payload)
+    if len(bucket) > 3000:
+        for old_key in list(bucket.keys())[: len(bucket) - 3000]:
+            bucket.pop(old_key, None)
+    _save_persistent_lookup_cache()
 
 
 def _endpoint_name(url: str) -> str:
@@ -210,6 +269,7 @@ def get_team_info(team_id: int) -> dict:
     team_id = int(team_id or 0)
     if not team_id:
         return {}
+    _load_persistent_lookup_cache()
     if team_id in _team_cache:
         return dict(_team_cache[team_id])
     data = _get_json(OPENDOTA_TEAM.format(team_id=team_id)) or {}
@@ -222,6 +282,7 @@ def get_team_info(team_id: int) -> dict:
         "logo_url": data.get("logo_url") or "",
     }
     _team_cache[team_id] = payload
+    _remember_lookup_cache("teams", team_id, payload)
     return dict(payload)
 
 
@@ -234,6 +295,7 @@ def get_player_info(account_id: int) -> dict:
     account_id = int(account_id or 0)
     if not account_id:
         return {}
+    _load_persistent_lookup_cache()
     if account_id in _player_cache:
         return dict(_player_cache[account_id])
     data = _get_json(OPENDOTA_PLAYER.format(account_id=account_id)) or {}
@@ -247,4 +309,5 @@ def get_player_info(account_id: int) -> dict:
         "steamid": profile.get("steamid") or "",
     }
     _player_cache[account_id] = payload
+    _remember_lookup_cache("players", account_id, payload)
     return dict(payload)

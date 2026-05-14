@@ -981,8 +981,14 @@ def _preview_status_line(match_summary: dict) -> str:
     radiant_picks = sum(1 for player in players if player.get("isRadiant") and player.get("hero_id"))
     dire_picks = sum(1 for player in players if not player.get("isRadiant") and player.get("hero_id"))
     if has_complete_draft(details) and has_enough_bans(details):
-        return f"ready, players {radiant_picks + dire_picks}/10, bans {len(bans)}/{MIN_PREVIEW_BANS}"
-    return f"waiting, players {radiant_picks + dire_picks}/10, bans {len(bans)}/{MIN_PREVIEW_BANS}"
+        return (
+            f"ready, players {radiant_picks + dire_picks}/10, "
+            f"bans {len(bans)}/{MIN_PREVIEW_BANS}, source={details.get('bans_source') or 'none'}"
+        )
+    return (
+        f"waiting, players {radiant_picks + dire_picks}/10, "
+        f"bans {len(bans)}/{MIN_PREVIEW_BANS}, source={details.get('bans_source') or 'none'}"
+    )
 
 
 def _result_status_line(match_id: int) -> str:
@@ -996,7 +1002,84 @@ def _result_status_line(match_id: int) -> str:
         return f"not ready, OpenDota {status}"
     if not snapshot_has_final_result(snapshot):
         return "not ready, match not final"
+    details = _build_result_details_from_snapshot({"match_id": match_id, "leagueid": snapshot.get("leagueid") or 0})
+    if details:
+        missing_neutral, missing_neutral_icon, missing_buff_icon = result_asset_gaps(details)
+        if missing_neutral or missing_neutral_icon:
+            return (
+                "waiting assets, "
+                f"neutral_missing={len(missing_neutral)} neutral_icon_missing={len(missing_neutral_icon)} "
+                f"buff_icon_missing={len(missing_buff_icon)}"
+            )
     return "ready"
+
+
+def _find_exact_match_summary(match_id: int) -> dict:
+    match_id = int(match_id)
+    for match in filter_current_live_matches(get_raw_configured_live_rows() or []):
+        if int(match.get("match_id") or 0) == match_id:
+            return match
+
+    for match in get_recent_configured_matches():
+        if int(match.get("match_id") or 0) == match_id:
+            return match
+
+    snapshot = get_match_snapshot(match_id)
+    if not snapshot:
+        return {}
+
+    league_id = int(snapshot.get("leagueid") or 0)
+    summary = {
+        "match_id": match_id,
+        "leagueid": league_id,
+        "league_name": TIER1_LEAGUES.get(league_id) or snapshot.get("league_name") or f"League {league_id}",
+        "start_time": int(snapshot.get("start_time") or 0),
+        "radiant_name": snapshot.get("radiant_name") or "Radiant",
+        "dire_name": snapshot.get("dire_name") or "Dire",
+        "radiant_team_id": int(snapshot.get("radiant_team_id") or 0),
+        "dire_team_id": int(snapshot.get("dire_team_id") or 0),
+        "radiant_score": int(snapshot.get("radiant_score") or 0),
+        "dire_score": int(snapshot.get("dire_score") or 0),
+        "series_id": int(snapshot.get("series_id") or 0),
+        "series_type": snapshot.get("series_type"),
+    }
+    if league_id:
+        for row in get_league_matches(league_id):
+            if int(row.get("match_id") or 0) == match_id:
+                _merge_match_summary_metadata(summary, row)
+                summary["series_id"] = int(row.get("series_id") or summary.get("series_id") or 0)
+                summary["series_type"] = row.get("series_type") if row.get("series_type") is not None else summary.get("series_type")
+                break
+    return summary
+
+
+async def post_exact_preview(match_id: int) -> None:
+    summary = _find_exact_match_summary(match_id)
+    if not summary:
+        logger.error("Could not post preview for exact match_id=%s: match not found.", match_id)
+        return
+    details = _build_preview_details(summary)
+    if not has_complete_draft(details) or not has_enough_bans(details):
+        logger.error(
+            "Could not post preview for exact match_id=%s: draft incomplete players=%s bans=%s/%s source=%s.",
+            match_id,
+            len(details.get("players") or []),
+            len(details.get("bans") or []),
+            MIN_PREVIEW_BANS,
+            details.get("bans_source") or "none",
+        )
+        return
+    await send_historical_preview_post(details, match_id=int(match_id), post_delay_seconds=POST_DELAY_SECONDS)
+    remember_previewed_match(state, int(match_id))
+    save_state(state)
+
+
+async def post_exact_result(match_id: int) -> None:
+    summary = _find_exact_match_summary(match_id)
+    if not summary:
+        logger.error("Could not post result for exact match_id=%s: match not found.", match_id)
+        return
+    await post_match(summary)
 
 
 def print_queue_status() -> None:
@@ -1283,9 +1366,17 @@ async def main(
     league_story_count: int = 0,
     force_story_backfill: bool = False,
     any_league: bool = False,
+    post_preview_match_id: int = 0,
+    post_result_match_id: int = 0,
 ) -> None:
     await startup()
 
+    if post_preview_match_id:
+        await post_exact_preview(post_preview_match_id)
+        return
+    if post_result_match_id:
+        await post_exact_result(post_result_match_id)
+        return
     if league_story_backfill:
         await backfill_league_story(league_story_backfill, count=league_story_count, force=force_story_backfill)
         return
@@ -1317,6 +1408,8 @@ def cli_main() -> None:
     parser.add_argument("--force-story-backfill", action="store_true", help="ignore sent state for --backfill-league-story")
     parser.add_argument("--any-league", action="store_true", help="use latest pro matches from any league for --backfill")
     parser.add_argument("--queue-status", action="store_true", help="print live/tracked queue diagnostics and exit")
+    parser.add_argument("--post-preview", type=int, default=0, metavar="MATCH_ID", help="post preview for one exact match id")
+    parser.add_argument("--post-result", type=int, default=0, metavar="MATCH_ID", help="post result for one exact match id")
     args = parser.parse_args()
 
     if args.validate_config:
@@ -1331,6 +1424,9 @@ def cli_main() -> None:
     if args.queue_status:
         print_queue_status()
         raise SystemExit(0)
+    if args.post_preview and args.post_result:
+        print("Use only one manual post command at a time: --post-preview or --post-result.")
+        raise SystemExit(1)
 
     asyncio.run(
         main(
@@ -1342,6 +1438,8 @@ def cli_main() -> None:
             league_story_count=args.story_count,
             force_story_backfill=args.force_story_backfill,
             any_league=args.any_league,
+            post_preview_match_id=args.post_preview,
+            post_result_match_id=args.post_result,
         )
     )
 
