@@ -21,7 +21,7 @@ class Settings:
     channel_id: str = os.getenv("CHANNEL_ID", _legacy("CHANNEL_ID")).strip()
     stratz_token: str = os.getenv("STRATZ_TOKEN", _legacy("STRATZ_TOKEN")).strip()
     steam_api_key: str = os.getenv("STEAM_API_KEY", _legacy("STEAM_API_KEY")).strip()
-    check_interval_minutes: int = int(os.getenv("CHECK_INTERVAL_MINUTES", "2"))
+    check_interval_minutes: int = int(os.getenv("CHECK_INTERVAL_MINUTES", "4"))
     max_matches_per_check: int = int(os.getenv("MAX_MATCHES_PER_CHECK", "10"))
     post_delay_seconds: int = int(os.getenv("POST_DELAY_SECONDS", "1"))
     cache_dir: str = os.getenv("CACHE_DIR", "data/cache")

@@ -785,7 +785,7 @@ def generate_match_preview_image(match: dict) -> io.BytesIO:
     draw.text((82, 138), _fit(draw, league_name.upper(), league_font, 820), font=league_font, fill=TEXT)
     _draw_header_pill(
         draw,
-        "@dota2_matches",
+        "@dotawatch",
         [IMG_W_PREVIEW - 360, 126, IMG_W_PREVIEW - 82, 176],
         BG_TOP,
         LINE,
@@ -848,7 +848,7 @@ def generate_match_result_image(match: dict) -> io.BytesIO:
     brand_box = [IMG_W_RESULT - 380, 24, IMG_W_RESULT - 54, 66]
     _draw_header_pill(
         draw,
-        "@dota2_matches",
+        "@dotawatch",
         brand_box,
         BG_TOP,
         LINE,

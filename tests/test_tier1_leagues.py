@@ -66,6 +66,14 @@ class Tier1LeagueTests(unittest.TestCase):
 
         self.assertIn("13245379764580870318", details["radiant_team"]["logo_url"])
 
+    def test_current_dreamleague_logo_overrides_cover_common_teams(self) -> None:
+        from config import TEAM_LOGO_OVERRIDES
+
+        for team_id in (2163, 7119388, 8255888, 9467224, 9572001, 9964962, 10136357):
+            with self.subTest(team_id=team_id):
+                self.assertIn(team_id, TEAM_LOGO_OVERRIDES)
+                self.assertTrue(TEAM_LOGO_OVERRIDES[team_id].startswith("https://"))
+
     def test_live_neutral_items_fill_missing_result_neutral(self) -> None:
         details = {
             "players": [

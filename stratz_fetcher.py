@@ -47,7 +47,7 @@ def stratz_graphql(query, variables=None):
             json={"query": query, "variables": variables or {}},
             headers={
                 "Authorization": f"Bearer {STRATZ_TOKEN}",
-                "User-Agent": "Dota2MatchesBot/3.2 contact:telegram:@dota2_matches",
+                "User-Agent": "DotaWatchBot/2.1 contact:telegram:@dotawatch",
                 "Accept": "application/json",
             },
             timeout=30,

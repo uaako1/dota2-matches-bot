@@ -956,7 +956,7 @@ async def check_and_post() -> None:
         logger.info("No finished tracked matches found.")
         return
 
-    candidates.sort(key=lambda item: int(item.get("start_time") or 0), reverse=True)
+    candidates.sort(key=lambda item: int(item.get("start_time") or 0))
     new_matches = candidates[:MAX_MATCHES_PER_CHECK]
 
     if not new_matches:
