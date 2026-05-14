@@ -7,7 +7,13 @@ from config import LIVE_ANNOUNCE_ENABLED, LIVE_CHECK_ENABLED, MAX_MATCHES_PER_CH
 from config import TEAM_LOGO_OVERRIDES
 from config import TIER1_LEAGUES
 from config import is_allowed_tier1_league
-from opendota_discovery import get_league_matches, get_match_snapshot, get_player_info, get_team_info
+from opendota_discovery import (
+    get_league_matches,
+    get_match_snapshot,
+    get_opendota_health,
+    get_player_info,
+    get_team_info,
+)
 from src.bot.discovery import (
     filter_current_live_matches,
     get_finished_tracked_matches,
@@ -24,6 +30,7 @@ from src.bot.readiness import (
     has_enough_bans,
     log_result_asset_quality,
     result_asset_gaps,
+    snapshot_has_final_result,
 )
 from src.bot.runtime_state import bot, state, validate_runtime_config
 from src.bot.scheduler import run_interval_scheduler
@@ -933,6 +940,96 @@ async def check_live_matches(live_matches: list[dict] | None = None) -> None:
     save_state(state)
 
 
+def _format_opendota_block() -> str:
+    health = get_opendota_health()
+    if not health.get("blocked"):
+        return "none"
+    blocked_until = int(health.get("blocked_until") or 0)
+    remaining = int(health.get("blocked_remaining_seconds") or 0)
+    return f"{blocked_until} ({remaining}s left)"
+
+
+def _log_queue_summary(live_matches: list[dict] | None, candidates: list[dict] | None = None) -> None:
+    sent = get_sent_set(state)
+    announced = get_announced_live_set(state)
+    tracked = get_tracked_live_matches(state)
+    live_ids = {int(match["match_id"]) for match in live_matches or []}
+    preview_waiting = sum(
+        1
+        for match_id in live_ids
+        if match_id not in sent and match_id not in announced and not bool((tracked.get(match_id) or {}).get("preview_posted"))
+    )
+    result_waiting = sum(1 for match_id in tracked if match_id not in sent and match_id not in live_ids)
+    logger.info(
+        "Queue: live=%s tracked=%s preview_waiting=%s result_waiting=%s candidates=%s opendota_blocked_until=%s",
+        len(live_ids),
+        len(tracked),
+        preview_waiting,
+        result_waiting,
+        len(candidates or []),
+        _format_opendota_block(),
+    )
+
+
+def _preview_status_line(match_summary: dict) -> str:
+    match_id = int(match_summary["match_id"])
+    if match_id in get_announced_live_set(state) or bool((get_tracked_live_matches(state).get(match_id) or {}).get("preview_posted")):
+        return "posted"
+    details = _build_preview_details(match_summary)
+    players = details.get("players") or []
+    bans = details.get("bans") or []
+    radiant_picks = sum(1 for player in players if player.get("isRadiant") and player.get("hero_id"))
+    dire_picks = sum(1 for player in players if not player.get("isRadiant") and player.get("hero_id"))
+    if has_complete_draft(details) and has_enough_bans(details):
+        return f"ready, players {radiant_picks + dire_picks}/10, bans {len(bans)}/{MIN_PREVIEW_BANS}"
+    return f"waiting, players {radiant_picks + dire_picks}/10, bans {len(bans)}/{MIN_PREVIEW_BANS}"
+
+
+def _result_status_line(match_id: int) -> str:
+    health = get_opendota_health()
+    if health.get("blocked"):
+        return f"not ready, OpenDota cooldown {health.get('blocked_remaining_seconds')}s"
+    snapshot = get_match_snapshot(match_id)
+    if not snapshot:
+        last_status = (health.get("last_status") or {}).get("matches") or {}
+        status = last_status.get("status") or "empty"
+        return f"not ready, OpenDota {status}"
+    if not snapshot_has_final_result(snapshot):
+        return "not ready, match not final"
+    return "ready"
+
+
+def print_queue_status() -> None:
+    raw_live_rows = get_raw_configured_live_rows() if LIVE_CHECK_ENABLED else []
+    live_matches = filter_current_live_matches(raw_live_rows or [])
+    tracked = get_tracked_live_matches(state)
+    by_id: dict[int, dict] = {}
+    for match in live_matches:
+        by_id[int(match["match_id"])] = match
+    for match_id, match in tracked.items():
+        payload = dict(match)
+        payload["match_id"] = int(payload.get("match_id") or match_id)
+        by_id.setdefault(int(match_id), payload)
+
+    _log_queue_summary(live_matches, [])
+    if not by_id:
+        print("Queue is empty.")
+        print(f"OpenDota cooldown: {_format_opendota_block()}")
+        return
+
+    for match in sorted(by_id.values(), key=lambda item: int(item.get("start_time") or 0)):
+        match_id = int(match["match_id"])
+        radiant = match.get("radiant_name") or "Radiant"
+        dire = match.get("dire_name") or "Dire"
+        league = match.get("league_name") or TIER1_LEAGUES.get(int(match.get("leagueid") or 0), "")
+        print(f"{match_id} {radiant} vs {dire}")
+        if league:
+            print(f"  league: {league}")
+        print(f"  preview: {_preview_status_line(match)}")
+        print(f"  result: {_result_status_line(match_id)}")
+    print(f"OpenDota cooldown: {_format_opendota_block()}")
+
+
 async def check_and_post() -> None:
     raw_live_rows = get_raw_configured_live_rows() if LIVE_CHECK_ENABLED else None
     live_matches = filter_current_live_matches(raw_live_rows or []) if raw_live_rows is not None else None
@@ -952,6 +1049,7 @@ async def check_and_post() -> None:
     if not candidates:
         candidates = get_recent_finished_safety_matches(current_live_ids)
     save_state(state)
+    _log_queue_summary(live_matches, candidates)
     if not candidates:
         logger.info("No finished tracked matches found.")
         return
@@ -1058,6 +1156,31 @@ async def post_historical_preview_and_result(match_summary: dict) -> None:
     await post_match(match_summary)
 
 
+def _sort_backfill_story_matches(matches: list[dict]) -> list[dict]:
+    groups: dict[tuple[str, int], list[dict]] = {}
+    for match in matches:
+        series_id = int(match.get("series_id") or 0)
+        key = ("series", series_id) if series_id else ("single", int(match.get("match_id") or 0))
+        groups.setdefault(key, []).append(match)
+
+    ordered_groups = []
+    for group in groups.values():
+        group.sort(key=lambda item: (int(item.get("start_time") or 0), int(item.get("match_id") or 0)))
+        ordered_groups.append(group)
+    ordered_groups.sort(
+        key=lambda group: (
+            int(group[0].get("start_time") or 0),
+            int(group[0].get("series_id") or 0),
+            int(group[0].get("match_id") or 0),
+        )
+    )
+
+    ordered: list[dict] = []
+    for group in ordered_groups:
+        ordered.extend(group)
+    return ordered
+
+
 async def maybe_post_recovery_preview(match_summary: dict) -> None:
     match_id = int(match_summary["match_id"])
     if match_id in get_previewed_set(state):
@@ -1119,6 +1242,8 @@ async def backfill_league_story(league_id: int, count: int = 0, force: bool = Fa
             "dire_team_id": int(row.get("dire_team_id") or 0),
             "radiant_score": int(row.get("radiant_score") or 0),
             "dire_score": int(row.get("dire_score") or 0),
+            "series_id": int(row.get("series_id") or 0),
+            "series_type": row.get("series_type"),
         }
         _merge_match_summary_metadata(summary, recent_by_match_id.get(match_id))
         if not summary.get("radiant_name"):
@@ -1127,7 +1252,7 @@ async def backfill_league_story(league_id: int, count: int = 0, force: bool = Fa
             summary["dire_name"] = "Dire"
         candidates.append(summary)
 
-    candidates.sort(key=lambda item: int(item.get("start_time") or 0))
+    candidates = _sort_backfill_story_matches(candidates)
     if count > 0:
         candidates = candidates[:count]
     if not candidates:
@@ -1191,6 +1316,7 @@ def cli_main() -> None:
     parser.add_argument("--story-count", type=int, default=0, help="limit --backfill-league-story to the first N matches in chronological order")
     parser.add_argument("--force-story-backfill", action="store_true", help="ignore sent state for --backfill-league-story")
     parser.add_argument("--any-league", action="store_true", help="use latest pro matches from any league for --backfill")
+    parser.add_argument("--queue-status", action="store_true", help="print live/tracked queue diagnostics and exit")
     args = parser.parse_args()
 
     if args.validate_config:
@@ -1200,6 +1326,10 @@ def cli_main() -> None:
                 print(error)
             raise SystemExit(1)
         print("Runtime config is valid.")
+        raise SystemExit(0)
+
+    if args.queue_status:
+        print_queue_status()
         raise SystemExit(0)
 
     asyncio.run(
