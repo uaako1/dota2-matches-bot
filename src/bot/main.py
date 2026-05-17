@@ -4,6 +4,7 @@ import logging
 
 from config import CHECK_INTERVAL_MINUTES
 from config import LIVE_ANNOUNCE_ENABLED, LIVE_CHECK_ENABLED, MAX_MATCHES_PER_CHECK, POST_DELAY_SECONDS
+from config import STATE_FILE
 from config import TEAM_LOGO_OVERRIDES
 from config import TIER1_LEAGUES
 from config import is_allowed_tier1_league
@@ -38,6 +39,7 @@ from steam_fetcher import get_live_league_game
 from storage import (
     get_announced_live_set,
     get_cached_draft,
+    get_match_post_record,
     get_previewed_set,
     get_sent_set,
     get_tracked_live_matches,
@@ -274,6 +276,19 @@ def _merge_series_context(target: dict, context: dict, *, include_current_map: b
         if inferred:
             target["game_number"] = inferred
     return target
+
+
+def _merge_recorded_preview_context(details: dict, match_id: int) -> dict:
+    record = get_match_post_record(state, match_id)
+    preview = record.get("preview") if isinstance(record.get("preview"), dict) else {}
+    if not preview:
+        return details
+    for key in ("series_id", "series_type", "best_of", "game_number"):
+        if preview.get(key) not in (None, "", 0, False):
+            details[key] = preview.get(key)
+    if not details.get("series_label") and details.get("best_of"):
+        details["series_label"] = f"BO{int(details['best_of'])}"
+    return details
 
 
 def _apply_official_snapshot_result(details: dict, snapshot: dict, match_summary: dict | None = None) -> dict:
@@ -867,6 +882,7 @@ async def post_match(match_summary: dict) -> None:
         _build_series_context(match_id, details.get("leagueid"), snapshot, match_summary, include_series_score=True),
         include_current_map=True,
     )
+    _merge_recorded_preview_context(details, match_id)
     _merge_snapshot_player_loadouts(details, snapshot)
     _merge_live_neutral_items(details, match_summary)
     _apply_logo_fallback(details, match_summary)
@@ -1354,6 +1370,15 @@ async def startup() -> None:
 
     assert bot is not None
     logger.info("Bot starting...")
+    logger.info(
+        "State loaded from %s: sent=%s previewed=%s announced=%s tracked=%s ledger=%s",
+        STATE_FILE,
+        len(state.get("sent_matches") or []),
+        len(state.get("previewed_matches") or []),
+        len(state.get("announced_live_matches") or []),
+        len(state.get("tracked_live_matches") or {}),
+        len(state.get("match_posts") or {}),
+    )
     logger.info("Initialization complete.")
 
 

@@ -14,6 +14,7 @@ DEFAULT_STATE = {
     "announced_live_matches": [],
     "tracked_live_matches": {},
     "draft_cache": {},
+    "match_posts": {},
 }
 
 DRAFT_CACHE_TTL_SECONDS = 24 * 60 * 60
@@ -60,6 +61,8 @@ def load_state() -> dict:
     state["tracked_live_matches"] = tracked if isinstance(tracked, dict) else {}
     draft_cache = state.get("draft_cache")
     state["draft_cache"] = draft_cache if isinstance(draft_cache, dict) else {}
+    match_posts = state.get("match_posts")
+    state["match_posts"] = match_posts if isinstance(match_posts, dict) else {}
     prune_draft_cache(state)
     return state
 
@@ -96,6 +99,45 @@ def remember_previewed_match(state: dict, match_id: int, max_items: int = 2000) 
     if int(match_id) not in previewed:
         previewed.append(int(match_id))
     state["previewed_matches"] = previewed[-max_items:]
+
+
+def get_match_post_record(state: dict, match_id: int) -> dict:
+    posts = state.get("match_posts") or {}
+    payload = posts.get(str(int(match_id))) or {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def has_match_posted(state: dict, match_id: int, kind: str) -> bool:
+    record = get_match_post_record(state, match_id)
+    posted = record.get(kind)
+    return isinstance(posted, dict) and bool(posted.get("posted_at"))
+
+
+def remember_match_post(state: dict, match_id: int, kind: str, details: dict, message_id: int | None = None, max_items: int = 3000) -> None:
+    posts = state.setdefault("match_posts", {})
+    key = str(int(match_id))
+    record = dict(posts.get(key) or {})
+    payload = {
+        "posted_at": int(time.time()),
+        "message_id": int(message_id) if message_id else None,
+        "leagueid": int(details.get("leagueid") or details.get("league_id") or 0),
+        "league_name": details.get("league_name") or "",
+        "series_id": int(details.get("series_id") or 0),
+        "series_type": details.get("series_type"),
+        "best_of": details.get("best_of"),
+        "game_number": details.get("game_number"),
+        "radiant_name": details.get("radiant_name") or "",
+        "dire_name": details.get("dire_name") or "",
+        "radiant_team_id": int((details.get("radiant_team") or {}).get("id") or details.get("radiant_team_id") or 0),
+        "dire_team_id": int((details.get("dire_team") or {}).get("id") or details.get("dire_team_id") or 0),
+        "radiant_score": int(details.get("radiant_score") or 0),
+        "dire_score": int(details.get("dire_score") or 0),
+    }
+    record[kind] = payload
+    posts[key] = record
+    if len(posts) > max_items:
+        for old_key in list(posts.keys())[: len(posts) - max_items]:
+            posts.pop(old_key, None)
 
 
 def get_announced_live_set(state: dict) -> set[int]:

@@ -7,11 +7,12 @@ from config import MIN_PREVIEW_BANS, TIER1_LEAGUES, is_allowed_tier1_league
 from src.bot.main import (
     _apply_logo_fallback,
     _build_series_context,
+    _merge_recorded_preview_context,
     _merge_live_neutral_items,
     _merge_match_summary_metadata,
     maybe_post_recovery_preview,
 )
-from storage import get_previewed_set, remember_previewed_match
+from storage import get_match_post_record, has_match_posted, get_previewed_set, remember_match_post, remember_previewed_match
 
 
 class Tier1LeagueTests(unittest.TestCase):
@@ -175,6 +176,53 @@ class Tier1LeagueTests(unittest.TestCase):
 
         self.assertEqual(get_previewed_set(state), {123})
         self.assertNotIn("sent_matches", state)
+
+    def test_match_post_ledger_tracks_preview_and_result_separately(self) -> None:
+        state = {}
+        details = {
+            "leagueid": 19696,
+            "league_name": "DreamLeague Season 29",
+            "series_id": 77,
+            "series_type": 1,
+            "best_of": 3,
+            "game_number": 2,
+            "radiant_name": "Team A",
+            "dire_name": "Team B",
+        }
+
+        remember_match_post(state, 123, "preview", details, message_id=10)
+
+        self.assertTrue(has_match_posted(state, 123, "preview"))
+        self.assertFalse(has_match_posted(state, 123, "result"))
+        self.assertEqual(get_match_post_record(state, 123)["preview"]["game_number"], 2)
+
+    def test_recorded_preview_context_overrides_result_map_number_after_restart(self) -> None:
+        import src.bot.main as main
+
+        previous_state = main.state
+        main.state = {}
+        try:
+            remember_match_post(
+                main.state,
+                555,
+                "preview",
+                {
+                    "series_id": 99,
+                    "series_type": 1,
+                    "best_of": 3,
+                    "game_number": 2,
+                    "radiant_name": "Team A",
+                    "dire_name": "Team B",
+                },
+            )
+            details = {"match_id": 555, "series_id": 99, "best_of": 3, "game_number": 1}
+
+            _merge_recorded_preview_context(details, 555)
+
+            self.assertEqual(details["game_number"], 2)
+            self.assertEqual(details["series_label"], "BO3")
+        finally:
+            main.state = previous_state
 
 
 class RecoveryPreviewTests(unittest.IsolatedAsyncioTestCase):
