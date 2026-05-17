@@ -18,12 +18,22 @@ OPENDOTA_PLAYER = "https://api.opendota.com/api/players/{account_id}"
 OPENDOTA_LEAGUE_MATCHES = "https://api.opendota.com/api/leagues/{league_id}/matches"
 
 OPENDOTA_429_COOLDOWN_SECONDS = int(os.getenv("OPENDOTA_429_COOLDOWN_SECONDS", "300"))
+OPENDOTA_PRO_MATCHES_TTL_SECONDS = int(os.getenv("OPENDOTA_PRO_MATCHES_TTL_SECONDS", "900"))
+OPENDOTA_LEAGUE_MATCHES_TTL_SECONDS = int(os.getenv("OPENDOTA_LEAGUE_MATCHES_TTL_SECONDS", "1800"))
+OPENDOTA_MATCH_404_RETRY_SECONDS = int(os.getenv("OPENDOTA_MATCH_404_RETRY_SECONDS", "300"))
+OPENDOTA_MATCH_ERROR_RETRY_SECONDS = int(os.getenv("OPENDOTA_MATCH_ERROR_RETRY_SECONDS", "180"))
 _opendota_blocked_until = 0.0
 _opendota_last_status: dict[str, object] = {}
 _team_cache: dict[int, dict] = {}
 _player_cache: dict[int, dict] = {}
 _persistent_lookup_cache_loaded = False
-_persistent_lookup_cache: dict[str, dict[str, dict]] = {"teams": {}, "players": {}}
+_persistent_lookup_cache: dict[str, dict[str, dict]] = {
+    "teams": {},
+    "players": {},
+    "pro_matches": {},
+    "league_matches": {},
+}
+_match_retry_after: dict[int, int] = {}
 
 
 def _lookup_cache_path() -> Path:
@@ -48,7 +58,14 @@ def _load_persistent_lookup_cache() -> None:
         return
     teams = data.get("teams") if isinstance(data.get("teams"), dict) else {}
     players = data.get("players") if isinstance(data.get("players"), dict) else {}
-    _persistent_lookup_cache = {"teams": teams, "players": players}
+    pro_matches = data.get("pro_matches") if isinstance(data.get("pro_matches"), dict) else {}
+    league_matches = data.get("league_matches") if isinstance(data.get("league_matches"), dict) else {}
+    _persistent_lookup_cache = {
+        "teams": teams,
+        "players": players,
+        "pro_matches": pro_matches,
+        "league_matches": league_matches,
+    }
     for key, value in teams.items():
         if str(key).isdigit() and isinstance(value, dict):
             _team_cache[int(key)] = dict(value)
@@ -77,6 +94,27 @@ def _remember_lookup_cache(kind: str, key: int, payload: dict) -> None:
     bucket[str(int(key))] = dict(payload)
     if len(bucket) > 3000:
         for old_key in list(bucket.keys())[: len(bucket) - 3000]:
+            bucket.pop(old_key, None)
+    _save_persistent_lookup_cache()
+
+
+def _cached_payload(kind: str, key: str | int, ttl_seconds: int) -> object | None:
+    _load_persistent_lookup_cache()
+    payload = _persistent_lookup_cache.get(kind, {}).get(str(key))
+    if not isinstance(payload, dict):
+        return None
+    updated_at = int(payload.get("updated_at") or 0)
+    if updated_at and int(time.time()) - updated_at <= ttl_seconds:
+        return payload.get("data")
+    return None
+
+
+def _remember_payload(kind: str, key: str | int, data: object, max_items: int = 500) -> None:
+    _load_persistent_lookup_cache()
+    bucket = _persistent_lookup_cache.setdefault(kind, {})
+    bucket[str(key)] = {"updated_at": int(time.time()), "data": data}
+    if len(bucket) > max_items:
+        for old_key in list(bucket.keys())[: len(bucket) - max_items]:
             bucket.pop(old_key, None)
     _save_persistent_lookup_cache()
 
@@ -186,7 +224,11 @@ def get_recent_pro_matches(league_ids: set[int] | list[int], take: int = 50) -> 
     if not wanted:
         return []
 
-    rows = _get_json(OPENDOTA_PRO_MATCHES) or []
+    rows = _cached_payload("pro_matches", "latest", OPENDOTA_PRO_MATCHES_TTL_SECONDS)
+    if not isinstance(rows, list):
+        rows = _get_json(OPENDOTA_PRO_MATCHES) or []
+        if rows:
+            _remember_payload("pro_matches", "latest", rows, max_items=1)
 
     matches = []
     for row in rows:
@@ -254,14 +296,39 @@ def get_live_league_matches(league_ids: set[int] | list[int], take: int = 50) ->
 
 
 def get_match_snapshot(match_id: int) -> dict:
-    return _get_json(OPENDOTA_MATCH.format(match_id=int(match_id))) or {}
+    match_id = int(match_id)
+    now = int(time.time())
+    retry_after = int(_match_retry_after.get(match_id) or 0)
+    if retry_after > now:
+        _opendota_last_status["matches"] = {
+            "status": "retry_wait",
+            "url": OPENDOTA_MATCH.format(match_id=match_id),
+            "time": now,
+            "retry_after": retry_after,
+        }
+        return {}
+
+    data = _get_json(OPENDOTA_MATCH.format(match_id=match_id)) or {}
+    status = (_opendota_last_status.get("matches") or {}).get("status")
+    if data:
+        _match_retry_after.pop(match_id, None)
+        return data
+    if status == 404:
+        _match_retry_after[match_id] = now + OPENDOTA_MATCH_404_RETRY_SECONDS
+    elif status not in (200, None):
+        _match_retry_after[match_id] = now + OPENDOTA_MATCH_ERROR_RETRY_SECONDS
+    return {}
 
 
 def get_league_matches(league_id: int) -> list[dict]:
     league_id = int(league_id or 0)
     if not league_id:
         return []
-    rows = _get_json(OPENDOTA_LEAGUE_MATCHES.format(league_id=league_id)) or []
+    rows = _cached_payload("league_matches", league_id, OPENDOTA_LEAGUE_MATCHES_TTL_SECONDS)
+    if not isinstance(rows, list):
+        rows = _get_json(OPENDOTA_LEAGUE_MATCHES.format(league_id=league_id)) or []
+        if rows:
+            _remember_payload("league_matches", league_id, rows, max_items=100)
     return rows if isinstance(rows, list) else []
 
 

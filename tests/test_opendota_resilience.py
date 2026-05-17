@@ -27,13 +27,15 @@ class OpenDotaResilienceTests(unittest.TestCase):
         opendota_discovery._opendota_blocked_until = 0
         opendota_discovery._opendota_last_status.clear()
         opendota_discovery._persistent_lookup_cache_loaded = False
-        opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}}
+        opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}, "pro_matches": {}, "league_matches": {}}
+        opendota_discovery._match_retry_after.clear()
         opendota_discovery.clear_opendota_memory_cache()
 
     def tearDown(self) -> None:
         opendota_discovery.STATE_FILE = self._original_state_file
         opendota_discovery._persistent_lookup_cache_loaded = False
-        opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}}
+        opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}, "pro_matches": {}, "league_matches": {}}
+        opendota_discovery._match_retry_after.clear()
         opendota_discovery.clear_opendota_memory_cache()
 
     def test_player_info_does_not_cache_429_failure(self) -> None:
@@ -71,12 +73,47 @@ class OpenDotaResilienceTests(unittest.TestCase):
                 self.assertEqual(opendota_discovery.get_player_info(456)["name"], "EsportName")
 
             opendota_discovery._persistent_lookup_cache_loaded = False
-            opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}}
+            opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}, "pro_matches": {}, "league_matches": {}}
             opendota_discovery.clear_opendota_memory_cache()
 
             with patch("opendota_discovery.requests.get") as mocked_get:
                 self.assertEqual(opendota_discovery.get_player_info(456)["name"], "EsportName")
                 mocked_get.assert_not_called()
+
+    def test_match_404_sets_retry_without_repeated_calls(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+
+            def fake_get(url: str, timeout: int):
+                return FakeResponse(404)
+
+            with patch("opendota_discovery.requests.get", side_effect=fake_get) as mocked_get:
+                self.assertEqual(opendota_discovery.get_match_snapshot(999), {})
+                self.assertEqual(opendota_discovery.get_match_snapshot(999), {})
+                self.assertEqual(mocked_get.call_count, 1)
+
+    def test_pro_matches_uses_ttl_cache(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            payload = [
+                {
+                    "match_id": 1,
+                    "leagueid": 19696,
+                    "league_name": "DreamLeague Season 29",
+                    "start_time": 1,
+                    "radiant_name": "A",
+                    "dire_name": "B",
+                }
+            ]
+
+            def fake_get(url: str, timeout: int):
+                return FakeResponse(200, payload)
+
+            with patch("opendota_discovery.requests.get", side_effect=fake_get) as mocked_get:
+                first = opendota_discovery.get_recent_pro_matches({19696})
+                second = opendota_discovery.get_recent_pro_matches({19696})
+                self.assertEqual(first, second)
+                self.assertEqual(mocked_get.call_count, 1)
 
     def test_backfill_story_keeps_maps_grouped_by_series(self) -> None:
         rows = [
