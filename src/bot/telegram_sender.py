@@ -20,19 +20,18 @@ class TelegramSender:
         self.retries = retries
         self.bot = Bot(token=self.token) if self.token else None
 
-    async def send_photo(self, image: io.BytesIO, caption: str) -> None:
+    async def send_photo(self, image: io.BytesIO, caption: str):
         if not self.bot or not self.channel_id:
             raise RuntimeError("Telegram sender is not configured")
         for attempt in range(1, self.retries + 1):
             try:
                 image.seek(0)
-                await self.bot.send_photo(
+                return await self.bot.send_photo(
                     chat_id=self.channel_id,
                     photo=image,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                 )
-                return
             except RetryAfter as exc:
                 delay = int(getattr(exc, "retry_after", 5) or 5) + 1
                 logger.warning("Telegram flood control. Retry %s/%s in %ss.", attempt, self.retries, delay)

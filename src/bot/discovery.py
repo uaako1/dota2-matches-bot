@@ -25,10 +25,18 @@ RECOVERY_STARTUP_GRACE_SECONDS = 5 * 60
 RECENT_FINISHED_SAFETY_LOOKBACK_SECONDS = 4 * 60 * 60
 
 
+def get_active_tier1_league_ids() -> set[int]:
+    league_ids = set(TIER1_LEAGUES)
+    for match in get_recent_pro_matches(league_ids, take=RECENT_MATCHES_FETCH_LIMIT):
+        if is_allowed_tier1_league(match.get("leagueid"), match.get("league_name") or ""):
+            league_ids.add(int(match.get("leagueid") or 0))
+    return league_ids
+
+
 def get_recent_configured_matches() -> list[dict]:
     cutoff = int(time.time()) - ACTIVE_LEAGUE_LOOKBACK_DAYS * 24 * 60 * 60
     live_ids = {match["match_id"] for match in get_live_configured_matches()}
-    matches = get_recent_pro_matches(set(TIER1_LEAGUES), take=RECENT_MATCHES_FETCH_LIMIT)
+    matches = get_recent_pro_matches(get_active_tier1_league_ids(), take=RECENT_MATCHES_FETCH_LIMIT)
     normalized = []
     for match in matches:
         if int(match.get("start_time") or 0) < cutoff:
@@ -42,11 +50,7 @@ def get_recent_configured_matches() -> list[dict]:
 
 
 def get_raw_configured_live_rows() -> list[dict]:
-    league_ids = set(TIER1_LEAGUES)
-    for match in get_recent_pro_matches(league_ids, take=RECENT_MATCHES_FETCH_LIMIT):
-        if is_allowed_tier1_league(match.get("leagueid"), match.get("league_name") or ""):
-            league_ids.add(int(match.get("leagueid") or 0))
-
+    league_ids = get_active_tier1_league_ids()
     live_matches = get_live_league_matches(league_ids, take=LIVE_MATCHES_FETCH_LIMIT)
     for match in live_matches:
         league_id = int(match["leagueid"])
@@ -117,7 +121,7 @@ def get_recent_finished_safety_matches(current_live_ids: set[int] | None = None)
     current_live_ids = current_live_ids or set()
     candidates = []
 
-    for match in get_recent_pro_matches(set(TIER1_LEAGUES), take=SAFETY_MATCHES_FETCH_LIMIT):
+    for match in get_recent_pro_matches(get_active_tier1_league_ids(), take=SAFETY_MATCHES_FETCH_LIMIT):
         match_id = int(match.get("match_id") or 0)
         if not match_id:
             continue
