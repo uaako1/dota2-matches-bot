@@ -44,6 +44,7 @@ from storage import (
     get_sent_set,
     get_tracked_live_matches,
     remember_draft_cache,
+    remember_match_post,
     remember_previewed_match,
     save_state,
     upsert_tracked_live_match,
@@ -192,7 +193,7 @@ def _build_series_context(
                 score_until = current_index if include_current_match_in_score else max(current_index - 1, 0)
                 scored_matches = series_matches[:score_until]
             else:
-                scored_matches = series_matches
+                scored_matches = []
             for row in scored_matches:
                 radiant_team_id = int(row.get("radiant_team_id") or 0)
                 dire_team_id = int(row.get("dire_team_id") or 0)
@@ -203,7 +204,7 @@ def _build_series_context(
 
             radiant_team_id = snapshot_radiant_id
             dire_team_id = snapshot_dire_id
-            if radiant_team_id or dire_team_id:
+            if (radiant_team_id or dire_team_id) and current_index:
                 series_score = {
                     "radiant": team_wins.get(radiant_team_id, 0),
                     "dire": team_wins.get(dire_team_id, 0),
@@ -1086,6 +1087,7 @@ async def post_exact_preview(match_id: int) -> None:
         )
         return
     await send_historical_preview_post(details, match_id=int(match_id), post_delay_seconds=POST_DELAY_SECONDS)
+    remember_match_post(state, int(match_id), "preview", details)
     remember_previewed_match(state, int(match_id))
     save_state(state)
 
@@ -1247,6 +1249,7 @@ async def post_historical_preview_and_result(match_summary: dict) -> None:
                 match_id=int(match_summary["match_id"]),
                 post_delay_seconds=POST_DELAY_SECONDS,
             )
+            remember_match_post(state, int(match_summary["match_id"]), "preview", preview_details)
             remember_previewed_match(state, int(match_summary["match_id"]))
             save_state(state)
         except Exception as exc:

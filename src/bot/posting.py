@@ -76,5 +76,6 @@ async def send_historical_preview_post(details: dict, *, match_id: int, post_del
 
 async def send_recovery_preview_post(details: dict, state: dict, *, match_id: int, post_delay_seconds: int) -> None:
     await send_historical_preview_post(details, match_id=match_id, post_delay_seconds=post_delay_seconds)
+    remember_match_post(state, match_id, "preview", details)
     remember_previewed_match(state, match_id)
     save_state(state)

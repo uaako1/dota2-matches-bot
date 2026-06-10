@@ -56,6 +56,8 @@ def _series_is_complete(match: dict) -> bool:
 
 
 def _series_score_line(match: dict) -> str:
+    if not match.get("game_number"):
+        return ""
     series_score = match.get("series_score") or {}
     if not series_score:
         return ""
@@ -66,7 +68,7 @@ def _series_score_line(match: dict) -> str:
 
 def _preview_matchup_line(radiant_name: str, dire_name: str, match: dict) -> str:
     series_score = match.get("series_score") or {}
-    if series_score:
+    if series_score and match.get("game_number"):
         radiant_series = int(series_score.get("radiant", 0))
         dire_series = int(series_score.get("dire", 0))
         return f"{_plain(radiant_name, 26)} [{radiant_series}:{dire_series}] {_plain(dire_name, 26)}"
@@ -113,7 +115,7 @@ def build_result_caption(match: dict) -> str:
     series_meta = _series_meta_line(match)
     game_line = _game_line(match)
     lines = [_b(league_name, 52), ""]
-    if series_score:
+    if series_score and match.get("game_number"):
         radiant_series = int(series_score.get("radiant", 0))
         dire_series = int(series_score.get("dire", 0))
         matchup = f"{_plain(radiant_name, 22)} [{radiant_series}:{dire_series}] {_plain(dire_name, 22)}"
