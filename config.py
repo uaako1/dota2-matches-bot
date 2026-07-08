@@ -39,6 +39,7 @@ TIER1_LEAGUES = {
     17765: "DreamLeague Season 25",
     19623: "Esports World Cup 2026",
     19675: "Esports World Cup 2026",
+    19785: "Esports World Cup 2026",
     18863: "FISSURE PLAYGROUND 2",
     16881: "Riyadh Masters 2024 at Esports World Cup",
 }

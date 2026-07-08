@@ -34,6 +34,10 @@ class Tier1LeagueTests(unittest.TestCase):
         self.assertTrue(is_allowed_tier1_league(0, "PGL Wallachia Season 9"))
         self.assertTrue(is_allowed_tier1_league(0, "Games of the Future 2026"))
 
+    def test_current_ewc_league_id_resolves_without_api_name(self) -> None:
+        self.assertTrue(is_allowed_tier1_league(19785, ""))
+        self.assertEqual(resolve_tier1_league_name(19785, ""), "Esports World Cup 2026")
+
     def test_dynamic_tier1_league_ids_include_upcoming_name_matches(self) -> None:
         from src.bot.discovery import get_active_tier1_league_ids
 
