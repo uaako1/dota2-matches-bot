@@ -278,6 +278,45 @@ class Tier1LeagueTests(unittest.TestCase):
         self.assertNotIn("[2:2]", preview_caption)
         self.assertNotIn("[2:2]", result_caption)
 
+    def test_captions_show_zero_series_score_for_first_map(self) -> None:
+        from formatter import build_preview_caption, build_result_caption
+
+        details = {
+            "league_name": "Esports World Cup 2026",
+            "radiant_name": "Team A",
+            "dire_name": "Team B",
+            "radiant_score": 20,
+            "dire_score": 10,
+            "radiant_win": True,
+            "duration": 1800,
+            "best_of": 3,
+            "series_label": "BO3",
+            "game_number": 1,
+        }
+
+        self.assertIn("Team A [0:0] Team B", build_preview_caption(details))
+        self.assertIn("Team A [0:0] Team B", build_result_caption(details))
+
+    def test_captions_show_previous_series_score_for_later_map(self) -> None:
+        from formatter import build_preview_caption, build_result_caption
+
+        details = {
+            "league_name": "Esports World Cup 2026",
+            "radiant_name": "Team A",
+            "dire_name": "Team B",
+            "radiant_score": 20,
+            "dire_score": 10,
+            "radiant_win": True,
+            "duration": 1800,
+            "best_of": 3,
+            "series_label": "BO3",
+            "game_number": 2,
+            "series_score": {"radiant": 1, "dire": 0},
+        }
+
+        self.assertIn("Team A [1:0] Team B", build_preview_caption(details))
+        self.assertIn("Team A [1:0] Team B", build_result_caption(details))
+
     def test_previewed_state_tracks_preview_separately_from_results(self) -> None:
         state = {}
 

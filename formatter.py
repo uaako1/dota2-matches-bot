@@ -58,8 +58,8 @@ def _series_is_complete(match: dict) -> bool:
 def _series_score_line(match: dict) -> str:
     if not match.get("game_number"):
         return ""
-    series_score = match.get("series_score") or {}
-    if not series_score:
+    series_score = _display_series_score(match)
+    if series_score is None:
         return ""
     radiant_series = int(series_score.get("radiant", 0))
     dire_series = int(series_score.get("dire", 0))
@@ -67,7 +67,28 @@ def _series_score_line(match: dict) -> str:
 
 
 def _preview_matchup_line(radiant_name: str, dire_name: str, match: dict) -> str:
+    series_score = _display_series_score(match)
+    if series_score is not None:
+        radiant_series = int(series_score.get("radiant", 0))
+        dire_series = int(series_score.get("dire", 0))
+        return f"{_plain(radiant_name, 22)} [{radiant_series}:{dire_series}] {_plain(dire_name, 22)}"
     return f"{_plain(radiant_name, 28)} vs {_plain(dire_name, 28)}"
+
+
+def _display_series_score(match: dict) -> dict | None:
+    if not match.get("game_number"):
+        return None
+    best_of = int(match.get("best_of") or 0)
+    label = str(match.get("series_label") or "").strip().lower()
+    if best_of <= 1 and not label.startswith("bo"):
+        return None
+    series_score = match.get("series_score")
+    if isinstance(series_score, dict):
+        return {
+            "radiant": int(series_score.get("radiant") or 0),
+            "dire": int(series_score.get("dire") or 0),
+        }
+    return {"radiant": 0, "dire": 0}
 
 
 def _series_tag(match: dict) -> str:
@@ -106,11 +127,11 @@ def build_result_caption(match: dict) -> str:
     duration_sec = int(match.get("duration") or 0)
     minutes, seconds = divmod(duration_sec, 60)
     duration = f"{minutes}:{seconds:02d}"
-    series_score = match.get("series_score") or {}
+    series_score = _display_series_score(match)
     series_meta = _series_meta_line(match)
     game_line = _game_line(match)
     lines = [_b(league_name, 52), ""]
-    if series_score and match.get("game_number"):
+    if series_score is not None:
         radiant_series = int(series_score.get("radiant", 0))
         dire_series = int(series_score.get("dire", 0))
         matchup = f"{_plain(radiant_name, 22)} [{radiant_series}:{dire_series}] {_plain(dire_name, 22)}"
