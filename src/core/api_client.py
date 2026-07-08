@@ -71,16 +71,10 @@ class APIClient:
         json_body: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> Any | None:
-        session = self._ensure_session()
+        response = self.request_sync(method, url, params=params, json_body=json_body, headers=headers)
+        if response is None:
+            return None
         try:
-            response = session.request(
-                method.upper(),
-                url,
-                params=params,
-                json=json_body,
-                headers=headers,
-                timeout=self.timeout,
-            )
             if response.status_code == 404:
                 return None
             content_type = response.headers.get("content-type", "")
@@ -92,6 +86,30 @@ class APIClient:
         except ValueError:
             logger.warning("API returned non-JSON response: %s", url)
             return None
+        except Exception as exc:
+            logger.warning("API request failed for %s: %s", url, exc)
+            return None
+
+    def request_sync(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: int | tuple[int, int] | None = None,
+    ):
+        session = self._ensure_session()
+        try:
+            return session.request(
+                method.upper(),
+                url,
+                params=params,
+                json=json_body,
+                headers=headers,
+                timeout=timeout or self.timeout,
+            )
         except Exception as exc:
             logger.warning("API request failed for %s: %s", url, exc)
             return None

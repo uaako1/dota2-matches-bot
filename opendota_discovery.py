@@ -4,9 +4,8 @@ import time
 import json
 from pathlib import Path
 
-import requests
-
 from config import STATE_FILE, is_allowed_tier1_league
+from src.core import shared_http
 
 logger = logging.getLogger(__name__)
 
@@ -165,16 +164,14 @@ def _get_json(url: str):
         )
         return None
 
-    try:
-        response = requests.get(url, timeout=30)
-    except requests.RequestException as exc:
+    response = shared_http.get(url, timeout=30)
+    if response is None:
         _opendota_last_status[endpoint] = {
             "status": "request_error",
             "url": url,
             "time": int(now),
-            "error": str(exc),
         }
-        logger.warning("OpenDota request failed for %s: %s", url, exc)
+        logger.warning("OpenDota request failed for %s", url)
         return None
 
     if response.status_code != 200:

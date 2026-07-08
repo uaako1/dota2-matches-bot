@@ -8,6 +8,7 @@ from config import STATE_FILE
 from config import TEAM_LOGO_OVERRIDES
 from config import TIER1_LEAGUES
 from config import is_allowed_tier1_league
+from config import resolve_tier1_league_name
 from opendota_discovery import (
     get_league_matches,
     get_match_snapshot,
@@ -85,6 +86,8 @@ def _apply_logo_fallback(details: dict, match_summary: dict | None = None) -> di
         radiant_logo_id = str(match_summary.get("radiant_logo_id") or match_summary.get("team_logo_radiant") or "").strip()
         if radiant_logo_id:
             radiant_team["logo_url"] = f"https://steamusercontent-a.akamaihd.net/ugc/{radiant_logo_id}/"
+    if radiant_id and not radiant_team.get("logo_url"):
+        radiant_team["logo_url"] = f"https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/{radiant_id}.png"
     if dire_id in TEAM_LOGO_OVERRIDES and not dire_team.get("logo_url"):
         dire_team["id"] = dire_id
         dire_team["logo_url"] = TEAM_LOGO_OVERRIDES[dire_id]
@@ -96,7 +99,34 @@ def _apply_logo_fallback(details: dict, match_summary: dict | None = None) -> di
         dire_logo_id = str(match_summary.get("dire_logo_id") or match_summary.get("team_logo_dire") or "").strip()
         if dire_logo_id:
             dire_team["logo_url"] = f"https://steamusercontent-a.akamaihd.net/ugc/{dire_logo_id}/"
+    if dire_id and not dire_team.get("logo_url"):
+        dire_team["logo_url"] = f"https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/{dire_id}.png"
     return details
+
+
+def _resolved_match_league_name(match_summary: dict, snapshot: dict | None = None) -> str:
+    snapshot = snapshot or {}
+    league_id = int(match_summary.get("leagueid") or match_summary.get("league_id") or snapshot.get("leagueid") or 0)
+    league_name = (
+        match_summary.get("league_name")
+        or snapshot.get("league_name")
+        or match_summary.get("league_title")
+        or snapshot.get("league_title")
+        or match_summary.get("tournament_name")
+        or snapshot.get("tournament_name")
+        or match_summary.get("event_name")
+        or snapshot.get("event_name")
+    )
+    return resolve_tier1_league_name(league_id, league_name)
+
+
+def _match_summary_for_stratz(match_summary: dict, snapshot: dict | None = None) -> dict:
+    league_name = _resolved_match_league_name(match_summary, snapshot)
+    if league_name.lower().startswith("league ") or league_name == "Pro Match":
+        return match_summary
+    payload = dict(match_summary)
+    payload["league_name"] = league_name
+    return payload
 
 
 def _preferred_player_name(account_id: int, fallback_name: str = "Player") -> str:
@@ -650,12 +680,7 @@ def _build_preview_details(match_summary: dict) -> dict:
         remember_draft_cache(state, match_id, live_players, bans, bans_source)
         save_state(state)
 
-    league_name = (
-        match_summary.get("league_name")
-        or snapshot.get("league_name")
-        or TIER1_LEAGUES.get(int(match_summary.get("leagueid") or match_summary.get("league_id") or snapshot.get("leagueid") or 0))
-        or f"League {int(match_summary.get('leagueid') or match_summary.get('league_id') or snapshot.get('leagueid') or 0)}"
-    )
+    league_name = _resolved_match_league_name(match_summary, snapshot)
 
     details = {
         "match_id": match_id,
@@ -758,12 +783,7 @@ def _build_result_details_from_snapshot(match_summary: dict) -> dict | None:
     details = {
         "match_id": match_id,
         "leagueid": league_id,
-        "league_name": (
-            match_summary.get("league_name")
-            or snapshot.get("league_name")
-            or TIER1_LEAGUES.get(league_id)
-            or f"League {league_id}"
-        ),
+        "league_name": _resolved_match_league_name(match_summary, snapshot),
         "radiant_name": snapshot.get("radiant_name") or match_summary.get("radiant_name") or "Radiant",
         "dire_name": snapshot.get("dire_name") or match_summary.get("dire_name") or "Dire",
         "radiant_score": int(snapshot.get("radiant_score") or match_summary.get("radiant_score") or 0),
@@ -826,12 +846,7 @@ def _build_historical_preview_details(match_summary: dict) -> dict | None:
     details = {
         "match_id": match_id,
         "leagueid": league_id,
-        "league_name": (
-            match_summary.get("league_name")
-            or snapshot.get("league_name")
-            or TIER1_LEAGUES.get(league_id)
-            or f"League {league_id}"
-        ),
+        "league_name": _resolved_match_league_name(match_summary, snapshot),
         "radiant_name": snapshot.get("radiant_name") or match_summary.get("radiant_name") or "Radiant",
         "dire_name": snapshot.get("dire_name") or match_summary.get("dire_name") or "Dire",
         "radiant_score": 0,
@@ -866,16 +881,11 @@ async def post_match(match_summary: dict) -> None:
 
     if not details:
         logger.warning("Could not build OpenDota snapshot result for match %s, trying STRATZ details.", match_id)
-        details = get_match_details(match_id, league_name_override=match_summary.get("league_name"))
+        details = get_match_details(match_id, league_name_override=_resolved_match_league_name(match_summary, snapshot))
     if not details:
         return
 
-    details["league_name"] = (
-        details.get("league_name")
-        or match_summary.get("league_name")
-        or TIER1_LEAGUES.get(int(match_summary.get("leagueid") or match_summary.get("league_id") or 0))
-        or f"League {int(match_summary.get('leagueid') or match_summary.get('league_id') or 0)}"
-    )
+    details["league_name"] = _resolved_match_league_name(match_summary, snapshot)
     details.setdefault("leagueid", match_summary.get("leagueid") or match_summary.get("league_id"))
     _apply_official_snapshot_result(details, snapshot, match_summary)
     _merge_series_context(
@@ -922,12 +932,7 @@ async def post_live_preview(match_summary: dict) -> None:
         )
         return
 
-    details["league_name"] = (
-        details.get("league_name")
-        or match_summary.get("league_name")
-        or TIER1_LEAGUES.get(int(match_summary.get("leagueid") or match_summary.get("league_id") or 0))
-        or f"League {int(match_summary.get('leagueid') or match_summary.get('league_id') or 0)}"
-    )
+    details["league_name"] = _resolved_match_league_name(match_summary)
     details.setdefault("leagueid", match_summary.get("leagueid") or match_summary.get("league_id"))
     details["radiant_score"] = int(match_summary.get("radiant_score") or details.get("radiant_score") or 0)
     details["dire_score"] = int(match_summary.get("dire_score") or details.get("dire_score") or 0)
@@ -1049,7 +1054,7 @@ def _find_exact_match_summary(match_id: int) -> dict:
     summary = {
         "match_id": match_id,
         "leagueid": league_id,
-        "league_name": TIER1_LEAGUES.get(league_id) or snapshot.get("league_name") or f"League {league_id}",
+        "league_name": _resolved_match_league_name(snapshot, snapshot),
         "start_time": int(snapshot.get("start_time") or 0),
         "radiant_name": snapshot.get("radiant_name") or "Radiant",
         "dire_name": snapshot.get("dire_name") or "Dire",
@@ -1336,7 +1341,7 @@ async def backfill_league_story(league_id: int, count: int = 0, force: bool = Fa
         summary = {
             "match_id": match_id,
             "leagueid": int(row.get("leagueid") or league_id),
-            "league_name": TIER1_LEAGUES.get(int(row.get("leagueid") or league_id), row.get("league_name") or f"League {league_id}"),
+            "league_name": _resolved_match_league_name(row),
             "start_time": int(row.get("start_time") or 0),
             "radiant_name": row.get("radiant_name") or "",
             "dire_name": row.get("dire_name") or "",

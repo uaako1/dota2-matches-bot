@@ -2,9 +2,8 @@ import logging
 from functools import lru_cache
 import time
 
-import requests
-
 from config import STRATZ_TOKEN, TIER1_LEAGUES, is_allowed_tier1_league
+from src.core import shared_http
 
 logger = logging.getLogger(__name__)
 
@@ -41,19 +40,18 @@ def stratz_graphql(query, variables=None):
     if not _wait_for_stratz_slot():
         return None
 
-    try:
-        response = requests.post(
-            STRATZ_GRAPHQL,
-            json={"query": query, "variables": variables or {}},
-            headers={
-                "Authorization": f"Bearer {STRATZ_TOKEN}",
-                "User-Agent": "DotaWatchBot/2.1 contact:telegram:@dotawatch",
-                "Accept": "application/json",
-            },
-            timeout=30,
-        )
-    except requests.RequestException as exc:
-        logger.warning("STRATZ request failed: %s", exc)
+    response = shared_http.post_json(
+        STRATZ_GRAPHQL,
+        json_body={"query": query, "variables": variables or {}},
+        headers={
+            "Authorization": f"Bearer {STRATZ_TOKEN}",
+            "User-Agent": "DotaWatchBot/2.1 contact:telegram:@dotawatch",
+            "Accept": "application/json",
+        },
+        timeout=30,
+    )
+    if response is None:
+        logger.warning("STRATZ request failed.")
         return None
 
     if response.status_code == 429:
@@ -99,7 +97,9 @@ def stratz_graphql(query, variables=None):
 
 def _fetch_constants_json(url: str):
     try:
-        response = requests.get(url, timeout=30)
+        response = shared_http.get(url, timeout=30)
+        if response is None:
+            return {}
         response.raise_for_status()
         return response.json()
     except Exception as exc:

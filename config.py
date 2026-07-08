@@ -115,6 +115,31 @@ def is_allowed_tier1_league(league_id: int | str | None = 0, league_name: str | 
     return any(keyword in normalized_name for keyword in TIER_TOURNAMENT_KEYWORDS)
 
 
+def _looks_like_placeholder_league_name(name: str) -> bool:
+    normalized = " ".join(str(name or "").split()).strip().lower()
+    if not normalized:
+        return True
+    if normalized.isdigit():
+        return True
+    if normalized.startswith("league ") and normalized[7:].strip().isdigit():
+        return True
+    return False
+
+
+def resolve_tier1_league_name(league_id: int | str | None = 0, league_name: str | None = "") -> str:
+    try:
+        resolved_id = int(league_id or 0)
+    except (TypeError, ValueError):
+        resolved_id = 0
+
+    normalized_name = " ".join(str(league_name or "").split()).strip()
+    if resolved_id in TIER1_LEAGUES:
+        return TIER1_LEAGUES[resolved_id]
+    if normalized_name and not _looks_like_placeholder_league_name(normalized_name):
+        return normalized_name
+    return TIER1_LEAGUES.get(resolved_id, "Pro Match") if resolved_id else "Pro Match"
+
+
 def _read_secret_file(path):
     try:
         return Path(path).read_text(encoding="utf-8-sig").strip()

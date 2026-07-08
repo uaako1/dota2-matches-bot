@@ -51,7 +51,7 @@ class OpenDotaResilienceTests(unittest.TestCase):
                 calls.append(url)
                 return responses.pop(0)
 
-            with patch("opendota_discovery.requests.get", side_effect=fake_get):
+            with patch("opendota_discovery.shared_http.get", side_effect=fake_get):
                 self.assertEqual(opendota_discovery.get_player_info(123), {})
                 opendota_discovery._opendota_blocked_until = 0
                 self.assertEqual(opendota_discovery.get_player_info(123)["name"], "ProName")
@@ -69,14 +69,14 @@ class OpenDotaResilienceTests(unittest.TestCase):
             def fake_get(url: str, timeout: int):
                 return responses.pop(0)
 
-            with patch("opendota_discovery.requests.get", side_effect=fake_get):
+            with patch("opendota_discovery.shared_http.get", side_effect=fake_get):
                 self.assertEqual(opendota_discovery.get_player_info(456)["name"], "EsportName")
 
             opendota_discovery._persistent_lookup_cache_loaded = False
             opendota_discovery._persistent_lookup_cache = {"teams": {}, "players": {}, "pro_matches": {}, "league_matches": {}}
             opendota_discovery.clear_opendota_memory_cache()
 
-            with patch("opendota_discovery.requests.get") as mocked_get:
+            with patch("opendota_discovery.shared_http.get") as mocked_get:
                 self.assertEqual(opendota_discovery.get_player_info(456)["name"], "EsportName")
                 mocked_get.assert_not_called()
 
@@ -87,7 +87,7 @@ class OpenDotaResilienceTests(unittest.TestCase):
             def fake_get(url: str, timeout: int):
                 return FakeResponse(404)
 
-            with patch("opendota_discovery.requests.get", side_effect=fake_get) as mocked_get:
+            with patch("opendota_discovery.shared_http.get", side_effect=fake_get) as mocked_get:
                 self.assertEqual(opendota_discovery.get_match_snapshot(999), {})
                 self.assertEqual(opendota_discovery.get_match_snapshot(999), {})
                 self.assertEqual(mocked_get.call_count, 1)
@@ -109,7 +109,7 @@ class OpenDotaResilienceTests(unittest.TestCase):
             def fake_get(url: str, timeout: int):
                 return FakeResponse(200, payload)
 
-            with patch("opendota_discovery.requests.get", side_effect=fake_get) as mocked_get:
+            with patch("opendota_discovery.shared_http.get", side_effect=fake_get) as mocked_get:
                 first = opendota_discovery.get_recent_pro_matches({19696})
                 second = opendota_discovery.get_recent_pro_matches({19696})
                 self.assertEqual(first, second)

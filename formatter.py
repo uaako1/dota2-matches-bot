@@ -1,6 +1,6 @@
 from html import escape
 
-from config import DEFAULT_STREAM_URL, LEAGUE_NAMES
+from config import DEFAULT_STREAM_URL, LEAGUE_NAMES, resolve_tier1_league_name
 
 
 def _clip(value: str, limit: int = 36) -> str:
@@ -67,11 +67,6 @@ def _series_score_line(match: dict) -> str:
 
 
 def _preview_matchup_line(radiant_name: str, dire_name: str, match: dict) -> str:
-    series_score = match.get("series_score") or {}
-    if series_score and match.get("game_number"):
-        radiant_series = int(series_score.get("radiant", 0))
-        dire_series = int(series_score.get("dire", 0))
-        return f"{_plain(radiant_name, 26)} [{radiant_series}:{dire_series}] {_plain(dire_name, 26)}"
     return f"{_plain(radiant_name, 28)} vs {_plain(dire_name, 28)}"
 
 
@@ -96,7 +91,7 @@ def _game_line(match: dict) -> str:
 
 def build_result_caption(match: dict) -> str:
     league_id = match.get("leagueid") or match.get("league_id", 0)
-    league_name = match.get("league_name") or LEAGUE_NAMES.get(league_id, "Pro Match")
+    league_name = resolve_tier1_league_name(league_id, match.get("league_name") or LEAGUE_NAMES.get(league_id, ""))
     radiant_name = match.get("radiant_name") or "Radiant"
     dire_name = match.get("dire_name") or "Dire"
     radiant_score = int(match.get("radiant_score") or 0)
@@ -135,7 +130,7 @@ def build_result_caption(match: dict) -> str:
 
 def build_preview_caption(match: dict) -> str:
     league_id = match.get("leagueid") or match.get("league_id", 0)
-    league_name = match.get("league_name") or LEAGUE_NAMES.get(league_id, f"League {league_id}")
+    league_name = resolve_tier1_league_name(league_id, match.get("league_name") or LEAGUE_NAMES.get(league_id, ""))
     radiant_name = match.get("radiant_name") or "Radiant"
     dire_name = match.get("dire_name") or "Dire"
     game_line = _game_line(match)

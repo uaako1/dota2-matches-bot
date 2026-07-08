@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from config import MIN_PREVIEW_BANS, TIER1_LEAGUES, is_allowed_tier1_league
+from config import MIN_PREVIEW_BANS, TIER1_LEAGUES, is_allowed_tier1_league, resolve_tier1_league_name
 from src.bot.main import (
     _apply_logo_fallback,
     _build_series_context,
@@ -85,6 +85,17 @@ class Tier1LeagueTests(unittest.TestCase):
 
         self.assertIn("13245379764580870318", details["radiant_team"]["logo_url"])
 
+    def test_logo_fallback_uses_generic_team_logo_when_lookup_is_missing(self) -> None:
+        details = {"radiant_team": {"id": 1234567, "logo_url": ""}, "dire_team": {"id": 0, "logo_url": ""}}
+
+        with patch("src.bot.main.get_team_info", return_value={}):
+            _apply_logo_fallback(details, {})
+
+        self.assertEqual(
+            details["radiant_team"]["logo_url"],
+            "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/1234567.png",
+        )
+
     def test_current_dreamleague_logo_overrides_cover_common_teams(self) -> None:
         from config import TEAM_LOGO_OVERRIDES
 
@@ -100,6 +111,10 @@ class Tier1LeagueTests(unittest.TestCase):
             with self.subTest(team_id=team_id):
                 self.assertIn(team_id, TEAM_LOGO_OVERRIDES)
                 self.assertTrue(TEAM_LOGO_OVERRIDES[team_id].startswith("https://"))
+
+    def test_resolve_tier1_league_name_ignores_placeholder_numbers(self) -> None:
+        self.assertEqual(resolve_tier1_league_name(19422, "19422"), "ESL One Birmingham 2026")
+        self.assertEqual(resolve_tier1_league_name(0, "League 191919"), "Pro Match")
 
     def test_live_neutral_items_fill_missing_result_neutral(self) -> None:
         details = {

@@ -9,6 +9,7 @@ from config import (
     SAFETY_MATCHES_FETCH_LIMIT,
     TIER1_LEAGUES,
     is_allowed_tier1_league,
+    resolve_tier1_league_name,
 )
 from opendota_discovery import get_live_league_matches, get_match_snapshot, get_recent_pro_matches
 from src.bot.readiness import snapshot_has_final_result
@@ -43,8 +44,7 @@ def get_recent_configured_matches() -> list[dict]:
             continue
         if int(match["match_id"]) in live_ids:
             continue
-        league_id = int(match["leagueid"])
-        match["league_name"] = TIER1_LEAGUES.get(league_id, match.get("league_name") or f"League {league_id}")
+        match["league_name"] = resolve_tier1_league_name(match.get("leagueid"), match.get("league_name"))
         normalized.append(match)
     return normalized
 
@@ -53,8 +53,7 @@ def get_raw_configured_live_rows() -> list[dict]:
     league_ids = get_active_tier1_league_ids()
     live_matches = get_live_league_matches(league_ids, take=LIVE_MATCHES_FETCH_LIMIT)
     for match in live_matches:
-        league_id = int(match["leagueid"])
-        match["league_name"] = TIER1_LEAGUES.get(league_id, match.get("league_name") or f"League {league_id}")
+        match["league_name"] = resolve_tier1_league_name(match.get("leagueid"), match.get("league_name"))
     return live_matches
 
 
@@ -142,7 +141,7 @@ def get_recent_finished_safety_matches(current_live_ids: set[int] | None = None)
         if not snapshot_has_final_result(snapshot):
             continue
 
-        match["league_name"] = TIER1_LEAGUES.get(league_id, match.get("league_name") or f"League {league_id}")
+        match["league_name"] = resolve_tier1_league_name(league_id, match.get("league_name"))
         match["duration"] = int(snapshot.get("duration") or match.get("duration") or 0)
         candidates.append(match)
 
