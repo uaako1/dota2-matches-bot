@@ -3,8 +3,9 @@ import os
 import time
 import json
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from config import STATE_FILE, is_allowed_tier1_league
+from config import OPENDOTA_API_KEY, STATE_FILE, is_allowed_tier1_league
 from src.core import shared_http
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,11 @@ OPENDOTA_LEAGUE_MATCHES = "https://api.opendota.com/api/leagues/{league_id}/matc
 OPENDOTA_429_COOLDOWN_SECONDS = int(os.getenv("OPENDOTA_429_COOLDOWN_SECONDS", "300"))
 OPENDOTA_PRO_MATCHES_TTL_SECONDS = int(os.getenv("OPENDOTA_PRO_MATCHES_TTL_SECONDS", "900"))
 OPENDOTA_LEAGUE_MATCHES_TTL_SECONDS = int(os.getenv("OPENDOTA_LEAGUE_MATCHES_TTL_SECONDS", "1800"))
+OPENDOTA_TEAM_TTL_SECONDS = int(os.getenv("OPENDOTA_TEAM_TTL_SECONDS", "86400"))
+OPENDOTA_PLAYER_TTL_SECONDS = int(os.getenv("OPENDOTA_PLAYER_TTL_SECONDS", "86400"))
 OPENDOTA_MATCH_404_RETRY_SECONDS = int(os.getenv("OPENDOTA_MATCH_404_RETRY_SECONDS", "300"))
 OPENDOTA_MATCH_ERROR_RETRY_SECONDS = int(os.getenv("OPENDOTA_MATCH_ERROR_RETRY_SECONDS", "180"))
+# Current cooldown is global across OpenDota endpoints. A future improvement can make this per-endpoint.
 _opendota_blocked_until = 0.0
 _opendota_last_status: dict[str, object] = {}
 _team_cache: dict[int, dict] = {}
@@ -65,12 +69,6 @@ def _load_persistent_lookup_cache() -> None:
         "pro_matches": pro_matches,
         "league_matches": league_matches,
     }
-    for key, value in teams.items():
-        if str(key).isdigit() and isinstance(value, dict):
-            _team_cache[int(key)] = dict(value)
-    for key, value in players.items():
-        if str(key).isdigit() and isinstance(value, dict):
-            _player_cache[int(key)] = dict(value)
 
 
 def _save_persistent_lookup_cache() -> None:
@@ -85,18 +83,6 @@ def _save_persistent_lookup_cache() -> None:
         logger.warning("Could not save OpenDota lookup cache %s: %s", path, exc)
 
 
-def _remember_lookup_cache(kind: str, key: int, payload: dict) -> None:
-    if not payload:
-        return
-    _load_persistent_lookup_cache()
-    bucket = _persistent_lookup_cache.setdefault(kind, {})
-    bucket[str(int(key))] = dict(payload)
-    if len(bucket) > 3000:
-        for old_key in list(bucket.keys())[: len(bucket) - 3000]:
-            bucket.pop(old_key, None)
-    _save_persistent_lookup_cache()
-
-
 def _cached_payload(kind: str, key: str | int, ttl_seconds: int) -> object | None:
     _load_persistent_lookup_cache()
     payload = _persistent_lookup_cache.get(kind, {}).get(str(key))
@@ -106,6 +92,16 @@ def _cached_payload(kind: str, key: str | int, ttl_seconds: int) -> object | Non
     if updated_at and int(time.time()) - updated_at <= ttl_seconds:
         return payload.get("data")
     return None
+
+
+def _stale_payload(kind: str, key: str | int) -> tuple[object | None, int]:
+    _load_persistent_lookup_cache()
+    payload = _persistent_lookup_cache.get(kind, {}).get(str(key))
+    if not isinstance(payload, dict):
+        return None, 0
+    updated_at = int(payload.get("updated_at") or 0)
+    age_seconds = max(0, int(time.time()) - updated_at) if updated_at else 0
+    return payload.get("data"), age_seconds
 
 
 def _remember_payload(kind: str, key: str | int, data: object, max_items: int = 500) -> None:
@@ -132,6 +128,15 @@ def _endpoint_name(url: str) -> str:
     if "/leagues/" in url:
         return "leagues"
     return "unknown"
+
+
+def _with_api_key(url: str) -> str:
+    if not OPENDOTA_API_KEY:
+        return url
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.setdefault("api_key", OPENDOTA_API_KEY)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 def get_opendota_health() -> dict:
@@ -164,7 +169,7 @@ def _get_json(url: str):
         )
         return None
 
-    response = shared_http.get(url, timeout=30)
+    response = shared_http.get(_with_api_key(url), timeout=30)
     if response is None:
         _opendota_last_status[endpoint] = {
             "status": "request_error",
@@ -336,8 +341,17 @@ def get_team_info(team_id: int) -> dict:
     _load_persistent_lookup_cache()
     if team_id in _team_cache:
         return dict(_team_cache[team_id])
+    cached = _cached_payload("teams", team_id, OPENDOTA_TEAM_TTL_SECONDS)
+    if isinstance(cached, dict):
+        _team_cache[team_id] = dict(cached)
+        return dict(cached)
     data = _get_json(OPENDOTA_TEAM.format(team_id=team_id)) or {}
     if not data:
+        stale, age_seconds = _stale_payload("teams", team_id)
+        if isinstance(stale, dict) and stale:
+            logger.warning("Using stale cached team info for team_id=%s, age=%ss", team_id, age_seconds)
+            _team_cache[team_id] = dict(stale)
+            return dict(stale)
         return {}
     payload = {
         "team_id": int(data.get("team_id") or team_id),
@@ -346,7 +360,7 @@ def get_team_info(team_id: int) -> dict:
         "logo_url": data.get("logo_url") or "",
     }
     _team_cache[team_id] = payload
-    _remember_lookup_cache("teams", team_id, payload)
+    _remember_payload("teams", team_id, payload, max_items=3000)
     return dict(payload)
 
 
@@ -362,8 +376,17 @@ def get_player_info(account_id: int) -> dict:
     _load_persistent_lookup_cache()
     if account_id in _player_cache:
         return dict(_player_cache[account_id])
+    cached = _cached_payload("players", account_id, OPENDOTA_PLAYER_TTL_SECONDS)
+    if isinstance(cached, dict):
+        _player_cache[account_id] = dict(cached)
+        return dict(cached)
     data = _get_json(OPENDOTA_PLAYER.format(account_id=account_id)) or {}
     if not data:
+        stale, age_seconds = _stale_payload("players", account_id)
+        if isinstance(stale, dict) and stale:
+            logger.warning("Using stale cached player info for account_id=%s, age=%ss", account_id, age_seconds)
+            _player_cache[account_id] = dict(stale)
+            return dict(stale)
         return {}
     profile = data.get("profile") or {}
     payload = {
@@ -373,5 +396,5 @@ def get_player_info(account_id: int) -> dict:
         "steamid": profile.get("steamid") or "",
     }
     _player_cache[account_id] = payload
-    _remember_lookup_cache("players", account_id, payload)
+    _remember_payload("players", account_id, payload, max_items=3000)
     return dict(payload)

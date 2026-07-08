@@ -10,8 +10,8 @@ from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
 
 Image.MAX_IMAGE_PIXELS = 20_000_000
 
-IMG_W_RESULT = 1700
-IMG_H_RESULT = 1020
+IMG_W_RESULT = 1920
+IMG_H_RESULT = 1080
 IMG_W_PREVIEW = 1280
 IMG_H_PREVIEW = 1280
 
@@ -86,27 +86,73 @@ def _font(size: int, bold: bool = False, condensed: bool = False):
     return ImageFont.load_default()
 
 
+def _font_cjk(size: int, bold: bool = False):
+    candidates = []
+    if bold:
+        candidates += [
+            "C:/Windows/Fonts/msyhbd.ttc",
+            "C:/Windows/Fonts/simsunb.ttf",
+            "C:/Windows/Fonts/YuGothB.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        ]
+    else:
+        candidates += [
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simsun.ttc",
+            "C:/Windows/Fonts/YuGothR.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    return _font(size, bold=bold)
+
+
+def _needs_cjk_font(text) -> bool:
+    return any(
+        "\u2e80" <= char <= "\u9fff"
+        or "\uf900" <= char <= "\ufaff"
+        or "\u3040" <= char <= "\u30ff"
+        or "\uac00" <= char <= "\ud7af"
+        for char in str(text or "")
+    )
+
+
+def _player_name_font(text, default_font, cjk_font):
+    return cjk_font if _needs_cjk_font(text) else default_font
+
+
 FONT_PREVIEW_TITLE = _font(70, bold=True, condensed=True)
 FONT_PREVIEW_TEAM = _font(46, bold=True, condensed=True)
 FONT_PREVIEW_TEAM_MED = _font(40, bold=True, condensed=True)
 FONT_PREVIEW_TEAM_SMALL = _font(32, bold=True, condensed=True)
 FONT_PREVIEW_NAME = _font(20, bold=True)
+FONT_PREVIEW_NAME_CJK = _font_cjk(20, bold=True)
 FONT_PREVIEW_NAME_SMALL = _font(18, bold=True)
+FONT_PREVIEW_NAME_SMALL_CJK = _font_cjk(18, bold=True)
 FONT_PREVIEW_HERO = _font(16, bold=False)
 FONT_PREVIEW_BRAND = _font(30, bold=True, condensed=True)
 FONT_PREVIEW_HANDLE = _font(24, bold=True)
 FONT_PREVIEW_SUB = _font(18, bold=True, condensed=True)
-FONT_RESULT_TITLE = _font(38, bold=True, condensed=True)
+FONT_RESULT_TITLE = _font(42, bold=True, condensed=True)
 FONT_RESULT_META = _font(22, bold=True, condensed=True)
-FONT_RESULT_TEAM = _font(25, bold=True)
+FONT_RESULT_TEAM = _font(27, bold=True)
 FONT_RESULT_SIDE = _font(17, bold=True, condensed=True)
-FONT_RESULT_HEAD = _font(16, bold=True)
-FONT_RESULT_NAME = _font(18, bold=True)
-FONT_RESULT_HERO = _font(15)
-FONT_RESULT_STAT = _font(18, bold=True)
+FONT_RESULT_HEAD = _font(18, bold=True)
+FONT_RESULT_NAME = _font(20, bold=True)
+FONT_RESULT_NAME_CJK = _font_cjk(20, bold=True)
+FONT_RESULT_HERO = _font(16)
+FONT_RESULT_STAT = _font(20, bold=True)
 FONT_RESULT_SMALL = _font(14, bold=True)
-FONT_RESULT_BRAND = _font(24, bold=True, condensed=True)
-FONT_RESULT_STAT_FIT = _font(16, bold=True)
+FONT_RESULT_BRAND = _font(26, bold=True, condensed=True)
+FONT_RESULT_STAT_FIT = _font(17, bold=True)
 FONT_RESULT_STAT_TINY = _font(14, bold=True)
 
 
@@ -389,11 +435,11 @@ def _paste_cover(base, image, box, focus_top=0.35, grayscale=False, focus_x=0.5)
     return True
 
 
-def _draw_logo_box(base, draw, logo, box, fallback_text="TM"):
+def _draw_logo_box(base, draw, logo, box, fallback_text="TM", padding=2):
     x1, y1, x2, y2 = box
     draw.rounded_rectangle(box, radius=16, fill=None, outline=LINE, width=2)
-    inner = [x1 + 6, y1 + 6, x2 - 6, y2 - 6]
-    if logo and _paste_contain(base, logo, inner, padding=2):
+    inner = [x1 + 4, y1 + 4, x2 - 4, y2 - 4]
+    if logo and _paste_contain(base, logo, inner, padding=padding):
         return
     draw.rounded_rectangle(box, radius=16, fill=(10, 18, 24), outline=LINE, width=2)
     text = (fallback_text or "TM")[:3].upper()
@@ -472,7 +518,12 @@ def _hero_card(base, draw, player, box):
     overlay_top = y2 - 60
     draw.rounded_rectangle([x1 + 6, overlay_top, x2 - 6, y2 - 6], radius=10, fill=(8, 15, 20))
     raw_name = _safe_name(player.get("name"))
-    name, name_font = _fit_font(draw, raw_name, [FONT_PREVIEW_NAME, FONT_PREVIEW_NAME_SMALL], x2 - x1 - 20)
+    name_fonts = (
+        [FONT_PREVIEW_NAME_CJK, FONT_PREVIEW_NAME_SMALL_CJK]
+        if _needs_cjk_font(raw_name)
+        else [FONT_PREVIEW_NAME, FONT_PREVIEW_NAME_SMALL]
+    )
+    name, name_font = _fit_font(draw, raw_name, name_fonts, x2 - x1 - 20)
     hero = _fit(draw, player.get("hero_name") or "", FONT_PREVIEW_HERO, x2 - x1 - 16)
     name_w = _tw(draw, name, name_font)
     hero_w = _tw(draw, hero.upper(), FONT_PREVIEW_HERO)
@@ -563,21 +614,22 @@ def _item_fallback_text(item: dict) -> str:
 
 def _result_columns():
     return {
-        "hero": 18,
+        "hero": 28,
         "player": 126,
-        "k": 380,
-        "d": 448,
-        "a": 516,
-        "net": 595,
-        "items": 700,
-        "backpack": 1018,
-        "neutral": 1158,
+        "k": 390,
+        "d": 460,
+        "a": 530,
+        "net": 610,
+        "items": 690,
+        "backpack": 1010,
+        "neutral": 1148,
         "buffs": 1228,
-        "gpm": 1328,
-        "xpm": 1390,
-        "dmg": 1452,
-        "heal": 1538,
-        "tower": 1604,
+        "lh_dn": 1340,
+        "gpm": 1440,
+        "xpm": 1510,
+        "dmg": 1588,
+        "heal": 1682,
+        "tower": 1774,
     }
 
 
@@ -590,13 +642,14 @@ def _result_header_widths():
         "net": 56,
         "items": 300,
         "backpack": 126,
-        "neutral": 54,
-        "buffs": 90,
-        "gpm": 56,
-        "xpm": 56,
-        "dmg": 72,
-        "heal": 60,
-        "tower": 72,
+        "neutral": 60,
+        "buffs": 100,
+        "lh_dn": 96,
+        "gpm": 62,
+        "xpm": 62,
+        "dmg": 76,
+        "heal": 66,
+        "tower": 86,
     }
 
 
@@ -610,7 +663,7 @@ def _fit_result_value_font(draw, value: str, font, width: int):
 def _draw_result_cell_text(draw, cols: dict, widths: dict, key: str, y: int, text: str, font, fill):
     width = widths.get(key, 40)
     value = str(text)
-    if key in {"gpm", "xpm", "dmg", "heal", "tower", "net"}:
+    if key in {"gpm", "xpm", "dmg", "heal", "tower", "net", "lh_dn"}:
         value, font = _fit_result_value_font(draw, value, font, width)
     else:
         value = _fit(draw, value, font, width)
@@ -644,20 +697,23 @@ def _draw_result_team(base, draw, team_name, score, players, logo, y, accent, st
     section_x1 = 18
     section_x2 = IMG_W_RESULT - 18
 
-    header_h = 62
+    header_h = 66
     draw.rounded_rectangle([section_x1, y, section_x2, y + header_h], radius=10, fill=PANEL, outline=LINE, width=2)
-    _draw_logo_box(base, draw, logo, [section_x1 + 10, y + 4, section_x1 + 92, y + 58], _team_badge_text(team_name))
-    team_x = section_x1 + 106
+    draw.rounded_rectangle([section_x1, y, section_x1 + 7, y + header_h], radius=3, fill=accent)
+    _draw_logo_box(base, draw, logo, [section_x1 + 10, y + 4, section_x1 + 104, y + 62], _team_badge_text(team_name), padding=0)
+    team_x = section_x1 + 118
     team_text, team_font = _fit_font(
         draw,
         team_name,
-        [FONT_RESULT_TEAM, _font(23, bold=True), _font(21, bold=True)],
-        270,
+        [FONT_RESULT_TEAM, _font(25, bold=True), _font(23, bold=True), _font(21, bold=True)],
+        310,
     )
-    draw.text((team_x, y + 17), team_text, font=team_font, fill=WHITE)
+    team_bbox = draw.textbbox((0, 0), team_text, font=team_font)
+    team_h = team_bbox[3] - team_bbox[1]
+    draw.text((team_x, y + (header_h - team_h) // 2 - 2), team_text, font=team_font, fill=WHITE)
 
     status_color = GREEN if status_label.upper() == "WIN" else RED
-    status_box = [cols["k"] - 6, y + 13, cols["a"] + 60, y + 45]
+    status_box = [cols["k"] - 6, y + 15, cols["a"] + 60, y + 47]
     score_text = str(score)
     score_font = _font(25, bold=True, condensed=True)
     label_text = status_label.upper()
@@ -674,9 +730,9 @@ def _draw_result_team(base, draw, team_name, score, players, logo, y, accent, st
     baseline_y = status_box[1] + (status_box[3] - status_box[1] - score_h) // 2 - 2
     draw.text((group_x, baseline_y), score_text, font=score_font, fill=status_color)
     draw.text((group_x + score_w + gap, baseline_y + score_h - label_h - 2), label_text, font=label_font, fill=status_color)
-    draw.line([(status_box[0] + 28, y + 46), (status_box[2] - 28, y + 46)], fill=status_color, width=2)
+    draw.line([(status_box[0] + 28, y + 50), (status_box[2] - 28, y + 50)], fill=status_color, width=2)
 
-    header_y = y + 72
+    header_y = y + 76
     headers = [
         ("hero", "HERO"),
         ("k", "K"),
@@ -687,6 +743,7 @@ def _draw_result_team(base, draw, team_name, score, players, logo, y, accent, st
         ("backpack", "BACKPACK"),
         ("neutral", "NEUT"),
         ("buffs", "BUFFS"),
+        ("lh_dn", "LH/DN"),
         ("gpm", "GPM"),
         ("xpm", "XPM"),
         ("dmg", "DMG"),
@@ -696,7 +753,7 @@ def _draw_result_team(base, draw, team_name, score, players, logo, y, accent, st
     draw.text((cols["player"], header_y), "PLAYER", font=FONT_RESULT_HEAD, fill=MUTED)
     header_widths = _result_header_widths()
     for key, label in headers:
-        header_font = FONT_RESULT_SMALL if key in {"buffs", "neutral", "tower"} else FONT_RESULT_HEAD
+        header_font = FONT_RESULT_HEAD
         width = header_widths.get(key, 40)
         text = _fit(draw, label, header_font, width)
         draw.text((cols[key] + (width - _tw(draw, text, header_font)) // 2, header_y), text, font=header_font, fill=MUTED)
@@ -713,8 +770,8 @@ def _draw_result_team(base, draw, team_name, score, players, logo, y, accent, st
 
         hero_short_name = player.get("hero_short_name") or ""
         focus_x, focus_y = _hero_focus(hero_short_name, mode="result")
-        hero_w = 84
-        hero_h = 48 if row_inner_h >= 56 else 42
+        hero_w = 94
+        hero_h = min(row_inner_h - 6, 54 if row_inner_h >= 60 else 48)
         hero_x1 = section_x1 + 8
         hero_y1 = y1 + (row_inner_h - hero_h) // 2
         hero_box = [hero_x1, hero_y1, hero_x1 + hero_w, hero_y1 + hero_h]
@@ -727,9 +784,11 @@ def _draw_result_team(base, draw, team_name, score, players, logo, y, accent, st
             _paste_contain(base, hero_img, hero_box, padding=1)
         else:
             _paste_cover(base, hero_img, hero_box, focus_top=focus_y, focus_x=focus_x)
-        name = _fit(draw, _safe_name(player.get("name")), FONT_RESULT_NAME, 260)
+        raw_name = _safe_name(player.get("name"))
+        name_font = _player_name_font(raw_name, FONT_RESULT_NAME, FONT_RESULT_NAME_CJK)
+        name = _fit(draw, raw_name, name_font, 260)
         hero = _fit(draw, player.get("hero_name") or "", FONT_RESULT_HERO, 260)
-        draw.text((cols["player"], y1 + 6), name, font=FONT_RESULT_NAME, fill=GOLD if player.get("is_bear_unit") else WHITE)
+        draw.text((cols["player"], y1 + 6), name, font=name_font, fill=GOLD if player.get("is_bear_unit") else WHITE)
         draw.text((cols["player"], y1 + 30), hero, font=FONT_RESULT_HERO, fill=MUTED)
 
         stat_y = y1 + (row_inner_h // 2) - 8
@@ -745,15 +804,17 @@ def _draw_result_team(base, draw, team_name, score, players, logo, y, accent, st
         _draw_item_slots(base, draw, player.get("items") or [], [cols["items"], y1 + 5, cols["items"] + 300, y2 - 5], cols=6)
         _draw_item_slots(base, draw, list(player.get("backpack") or [])[:3], [cols["backpack"], y1 + 5, cols["backpack"] + 126, y2 - 5], cols=3)
         neutral = player.get("neutral_item")
-        _draw_item_slots(base, draw, [neutral] if neutral else [], [cols["neutral"], y1 + 5, cols["neutral"] + 54, y2 - 5], cols=1)
-        _draw_buff_slots(base, draw, list(player.get("buffs") or [])[:3], [cols["buffs"], y1 + 4, cols["buffs"] + 94, y2 - 4], cols=3)
+        _draw_item_slots(base, draw, [neutral] if neutral else [], [cols["neutral"], y1 + 5, cols["neutral"] + 60, y2 - 5], cols=1)
+        _draw_buff_slots(base, draw, list(player.get("buffs") or [])[:3], [cols["buffs"], y1 + 4, cols["buffs"] + 100, y2 - 4], cols=3)
 
         if player.get("is_bear_unit"):
-            for key in ("gpm", "xpm", "dmg", "heal", "tower"):
+            for key in ("lh_dn", "gpm", "xpm", "dmg", "heal", "tower"):
                 _draw_result_cell_text(draw, cols, header_widths, key, stat_y, "-", FONT_RESULT_STAT, MUTED)
         else:
             heal = int(player.get("hero_healing") or 0)
             tower = int(player.get("tower_damage") or 0)
+            lh_dn = f"{int(player.get('last_hits') or 0)}/{int(player.get('denies') or 0)}"
+            _draw_result_cell_text(draw, cols, header_widths, "lh_dn", stat_y, lh_dn, FONT_RESULT_STAT, TEXT)
             _draw_result_cell_text(draw, cols, header_widths, "gpm", stat_y, str(player.get("gold_per_min", 0)), FONT_RESULT_STAT, TEXT)
             _draw_result_cell_text(draw, cols, header_widths, "xpm", stat_y, str(player.get("xp_per_min", 0)), FONT_RESULT_STAT, TEXT)
             _draw_result_cell_text(draw, cols, header_widths, "dmg", stat_y, _fmt_k(player.get("hero_damage")), FONT_RESULT_STAT, RED)
@@ -858,7 +919,7 @@ def generate_match_result_image(match: dict) -> io.BytesIO:
     title, title_font = _fit_font(
         draw,
         league_name.upper(),
-        [FONT_RESULT_TITLE, _font(34, bold=True, condensed=True), _font(30, bold=True, condensed=True)],
+        [FONT_RESULT_TITLE, _font(38, bold=True, condensed=True), _font(34, bold=True, condensed=True), _font(30, bold=True, condensed=True)],
         brand_box[0] - 220,
     )
     title_w = _tw(draw, title, title_font)
@@ -879,7 +940,7 @@ def generate_match_result_image(match: dict) -> io.BytesIO:
     time_h = time_bbox[3] - time_bbox[1]
     draw.text((time_box[0] + (time_box[2] - time_box[0] - time_w) // 2, time_box[1] + (time_box[3] - time_box[1] - time_h) // 2 - 2), duration, font=time_font, fill=WHITE)
     top_y = 98
-    bottom_y = 560
+    bottom_y = 588
     _draw_result_team(
         img, draw, radiant_name, radiant_score, radiant_players, radiant_logo, top_y, GREEN,
         "WIN" if radiant_win else "LOSE",

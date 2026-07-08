@@ -37,6 +37,8 @@ TIER1_LEAGUES = {
     18988: "DreamLeague Season 27",
     18111: "DreamLeague Season 26",
     17765: "DreamLeague Season 25",
+    19623: "Esports World Cup 2026",
+    19675: "Esports World Cup 2026",
     18863: "FISSURE PLAYGROUND 2",
     16881: "Riyadh Masters 2024 at Esports World Cup",
 }
@@ -159,3 +161,4 @@ CHANNEL_ID = _read_channel_id()
 TELEGRAM_TOKEN = _read_env_or_file("TELEGRAM_TOKEN", "telegram_token.txt")
 STRATZ_TOKEN = _read_env_or_file("STRATZ_TOKEN", "stratz_token.txt")
 STEAM_API_KEY = _read_env_or_file("STEAM_API_KEY", "steam_api_key.txt")
+OPENDOTA_API_KEY = _read_env_or_file("OPENDOTA_API_KEY", "opendota_api_key.txt")

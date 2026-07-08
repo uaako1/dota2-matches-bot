@@ -463,6 +463,11 @@ def _merge_snapshot_player_loadouts(details: dict, snapshot: dict) -> dict:
         if not player.get("buffs"):
             player["buffs"] = _snapshot_buff_items(source, item_map)
 
+        if not int(player.get("last_hits") or 0):
+            player["last_hits"] = int(source.get("last_hits") or 0)
+        if not int(player.get("denies") or 0):
+            player["denies"] = int(source.get("denies") or 0)
+
     return details
 
 
@@ -764,6 +769,8 @@ def _build_result_details_from_snapshot(match_summary: dict) -> dict | None:
                 "kills": int(player.get("kills") or 0),
                 "deaths": int(player.get("deaths") or 0),
                 "assists": int(player.get("assists") or 0),
+                "last_hits": int(player.get("last_hits") or 0),
+                "denies": int(player.get("denies") or 0),
                 "gold_per_min": int(player.get("gold_per_min") or 0),
                 "xp_per_min": int(player.get("xp_per_min") or 0),
                 "net_worth": int(player.get("net_worth") or 0),

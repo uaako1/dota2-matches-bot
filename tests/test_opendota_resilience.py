@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import opendota_discovery
 from src.bot.main import _sort_backfill_story_matches
@@ -59,6 +60,46 @@ class OpenDotaResilienceTests(unittest.TestCase):
 
             self.assertEqual(len(calls), 2)
 
+    def test_team_info_returns_fresh_data_and_caches_it(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            payload = {"team_id": 100, "name": "Team Fresh", "tag": "TF", "logo_url": "https://logo.test/team.png"}
+
+            def fake_get(url: str, timeout: int):
+                return FakeResponse(200, payload)
+
+            with patch("opendota_discovery.shared_http.get", side_effect=fake_get) as mocked_get:
+                self.assertEqual(opendota_discovery.get_team_info(100)["name"], "Team Fresh")
+                self.assertEqual(opendota_discovery.get_team_info(100)["logo_url"], "https://logo.test/team.png")
+                self.assertEqual(mocked_get.call_count, 1)
+
+    def test_team_info_returns_stale_cached_data_when_live_request_fails(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            opendota_discovery._remember_payload(
+                "teams",
+                101,
+                {"team_id": 101, "name": "Old Team", "tag": "OLD", "logo_url": "https://logo.test/old.png"},
+                max_items=3000,
+            )
+            opendota_discovery._persistent_lookup_cache["teams"]["101"]["updated_at"] = 1
+            opendota_discovery.clear_opendota_memory_cache()
+
+            with patch("opendota_discovery.OPENDOTA_TEAM_TTL_SECONDS", 0), patch(
+                "opendota_discovery.shared_http.get",
+                return_value=FakeResponse(429, headers={"Retry-After": "60"}),
+            ), self.assertLogs("opendota_discovery", level="WARNING") as logs:
+                self.assertEqual(opendota_discovery.get_team_info(101)["name"], "Old Team")
+
+            self.assertTrue(any("Using stale cached team info for team_id=101" in line for line in logs.output))
+
+    def test_team_info_returns_empty_when_live_request_fails_without_cache(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+
+            with patch("opendota_discovery.shared_http.get", return_value=FakeResponse(429, headers={"Retry-After": "60"})):
+                self.assertEqual(opendota_discovery.get_team_info(102), {})
+
     def test_player_info_uses_persistent_lookup_cache(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
@@ -79,6 +120,61 @@ class OpenDotaResilienceTests(unittest.TestCase):
             with patch("opendota_discovery.shared_http.get") as mocked_get:
                 self.assertEqual(opendota_discovery.get_player_info(456)["name"], "EsportName")
                 mocked_get.assert_not_called()
+
+    def test_player_info_returns_fresh_data_and_caches_it(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            payload = {"profile": {"personaname": "Steam Fresh", "name": "Pro Fresh", "steamid": "1"}}
+
+            def fake_get(url: str, timeout: int):
+                return FakeResponse(200, payload)
+
+            with patch("opendota_discovery.shared_http.get", side_effect=fake_get) as mocked_get:
+                self.assertEqual(opendota_discovery.get_player_info(200)["name"], "Pro Fresh")
+                self.assertEqual(opendota_discovery.get_player_info(200)["personaname"], "Steam Fresh")
+                self.assertEqual(mocked_get.call_count, 1)
+
+    def test_player_info_returns_stale_cached_data_when_live_request_fails(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            opendota_discovery._remember_payload(
+                "players",
+                201,
+                {"account_id": 201, "personaname": "Old Steam", "name": "Old Pro", "steamid": "2"},
+                max_items=3000,
+            )
+            opendota_discovery._persistent_lookup_cache["players"]["201"]["updated_at"] = 1
+            opendota_discovery.clear_opendota_memory_cache()
+
+            with patch("opendota_discovery.OPENDOTA_PLAYER_TTL_SECONDS", 0), patch(
+                "opendota_discovery.shared_http.get",
+                return_value=FakeResponse(429, headers={"Retry-After": "60"}),
+            ), self.assertLogs("opendota_discovery", level="WARNING") as logs:
+                self.assertEqual(opendota_discovery.get_player_info(201)["name"], "Old Pro")
+
+            self.assertTrue(any("Using stale cached player info for account_id=201" in line for line in logs.output))
+
+    def test_player_info_returns_empty_when_live_request_fails_without_cache(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+
+            with patch("opendota_discovery.shared_http.get", return_value=FakeResponse(429, headers={"Retry-After": "60"})):
+                self.assertEqual(opendota_discovery.get_player_info(202), {})
+
+    def test_opendota_api_key_is_added_when_configured(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            opendota_discovery.STATE_FILE = str(Path(tmp_dir) / "bot_state.json")
+            seen_urls = []
+
+            def fake_get(url: str, timeout: int):
+                seen_urls.append(url)
+                return FakeResponse(200, [])
+
+            with patch("opendota_discovery.OPENDOTA_API_KEY", "test-key"), patch("opendota_discovery.shared_http.get", side_effect=fake_get):
+                opendota_discovery.get_recent_pro_matches({19696})
+
+            query = parse_qs(urlsplit(seen_urls[0]).query)
+            self.assertEqual(query["api_key"], ["test-key"])
 
     def test_match_404_sets_retry_without_repeated_calls(self) -> None:
         with TemporaryDirectory() as tmp_dir:
